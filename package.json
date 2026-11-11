@@ -1,0 +1,41 @@
+{
+  "name": "edgegate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EdgeGate - Dynamic L7 API Gateway & Reverse Proxy Virtual Lab",
+  "main": "backend/index.js",
+  "scripts": {
+    "install:all": "npm install && npm install --prefix frontend",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "dev": "concurrently -k -n backend,frontend \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "node backend/index.js",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "seed": "node backend/scripts/seed.js",
+    "stop": "powershell -ExecutionPolicy Bypass -File scripts/stop.ps1",
+    "test": "jest --runInBand --forceExit",
+    "test:performance": "jest tests/performance.test.js --runInBand --forceExit --testTimeout=180000"
+  },
+  "dependencies": {
+    "concurrently": "^9.1.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "http-proxy": "^1.18.1",
+    "ioredis": "^5.4.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.5",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "autocannon": "^7.15.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 60000,
+    "globalSetup": "<rootDir>/tests/globalSetup.js",
+    "globalTeardown": "<rootDir>/tests/globalTeardown.js"
+  }
+}
