@@ -1,4 +1,4 @@
-﻿# EdgeGate â€” Dynamic L7 API Gateway & Reverse Proxy Virtual Lab
+﻿# EdgeGate: Dynamic L7 API Gateway & Reverse Proxy Virtual Lab
 
 EdgeGate is a locally runnable system-design simulator that demonstrates how a modern
 **Layer 7 API gateway** works end to end: dynamic routing, JWT authentication, reverse
