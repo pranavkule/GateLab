@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { Link } from 'react-router-dom';
 
 const CONCEPTS = [
@@ -20,7 +20,7 @@ const CONCEPTS = [
   },
   {
     title: 'What is Load Balancing?',
-    body: 'Spreading traffic across several identical servers for capacity and fault tolerance. EdgeGate has two layers: the entry load balancer on :3000 round-robins across healthy gateways, and each gateway round-robins across healthy instances of the target service. Unhealthy instances are skipped automatically; if all instances of a service are down the client gets 503.',
+    body: 'Spreading traffic across several identical servers for capacity and fault tolerance. EdgeGate has two layers: the entry load balancer (:3010) round-robins across healthy gateways, and each gateway round-robins across healthy instances of the target service. Unhealthy instances are skipped automatically; if all instances of a service are down the client gets 503.',
   },
   {
     title: 'What is Health Checking?',
@@ -36,7 +36,7 @@ const CONCEPTS = [
   },
   {
     title: 'How does the complete request lifecycle work?',
-    body: '1) You send GET /api/users from the Traffic Generator to :3000. 2) The entry LB picks a healthy gateway. 3) The gateway matches the path against its in-memory routing table. 4) The JWT middleware validates the token if the route requires auth. 5) Round-robin picks a healthy backend instance. 6) The reverse proxy forwards method, path, headers and body. 7) The backend responds; the proxy relays it. 8) Metrics and a request log record are produced asynchronously (Redis -> control plane -> MongoDB -> your browser over Socket.IO).',
+    body: '1) You send GET /api/users from the Traffic Generator to :3010. 2) The entry LB picks a healthy gateway. 3) The gateway matches the path against its in-memory routing table. 4) The JWT middleware validates the token if the route requires auth. 5) Round-robin picks a healthy backend instance. 6) The reverse proxy forwards method, path, headers and body. 7) The backend responds; the proxy relays it. 8) Metrics and a request log record are produced asynchronously (Redis -> control plane -> MongoDB -> your browser over Socket.IO).',
   },
 ];
 
@@ -46,8 +46,8 @@ const DEMO_STEPS = [
   'Successful authenticated request: Login (admin/admin123), set Authentication to "Valid JWT", send 5 requests - all 200.',
   'Dynamic route modification: Configuration page -> edit /api/products/* target to "orders" -> Apply. Send /api/products requests - the Order Service answers.',
   'Configuration synchronization: notice the version badge bump and the toast "synced to all gateways"; all three gateways show the same version in a moment.',
-  'Load balancing: restore the products route, send 20 GET /api/products - requests split between :4002 and :4005 (see backend cards).',
-  'Backend failure: Quick Scenario 6 (or Fail :4002 on the Product card) - all traffic moves to the other instance.',
+  'Load balancing: restore the products route, send 20 GET /api/products - requests split between the two Product Service instances (see backend cards).',
+  'Backend failure: Quick Scenario 6 (or the Fail button on a Product Service instance) - all traffic moves to the other instance.',
   'Gateway failure: "Simulate Failure" on Gateway 2 - the entry LB routes only to Gateways 1 and 3.',
   'Recovery: "Recover" the failed instances - they rejoin the round-robin after the next health check.',
   'Monitoring: review the System Overview chart and the Request Logs table; everything you saw was measured, never faked.',
@@ -59,21 +59,21 @@ export default function GuidePage() {
       <section className="card">
         <div className="card-head"><h2>Architecture</h2></div>
         <pre className="diagram">{`                                  +---------------------+
-                                  |    Browser (5173)   |
+                                  |    Browser (5174)   |
                                   |   EdgeGate Web UI   |
                                   +----------+----------+
                                              |  real HTTP traffic + Socket.IO
                                              v
                                   +----------+----------+
                                   |  Entry Load Balancer|
-                                  |       (:3000)       |
+                                  |       (:3010)       |
                                   +----------+----------+
                           round-robin, healthy gateways only
              +---------------------+------+----------------------+
              v                     v                      v
       +-------------+       +-------------+        +-------------+
       | Gateway 1   |       | Gateway 2   |        | Gateway 3   |
-      | (:3001)     |       | (:3002)     |        | (:3003)     |
+      | (:3011)     |       | (:3012)     |        | (:3013)     |
       +------+------+       +------+------+        +------+------+
              | JWT auth + dynamic routing + reverse proxy
              | (config kept in sync via Redis Pub/Sub)
@@ -81,12 +81,12 @@ export default function GuidePage() {
       v                      v                            v
 +-----------+ +-----------+ +-----------+  (2 instances each)
 | User Svc  | | Product   | | Order Svc |
-| 4001/4004 | | 4002/4005 | | 4003/4006 |
+| 4011/4014 | | 4012/4015 | | 4013/4016 |
 +-----------+ +-----------+ +-----------+
 
-MongoDB (:27017)  -> routing versions, audit, request logs, users
-Redis (:6379)     -> config Pub/Sub, log/metric streaming
-Control plane(5000) -> REST + Socket.IO live monitoring`}</pre>
+MongoDB (:27018)  -> routing versions, audit, request logs, users
+Redis (:6380)     -> config Pub/Sub, log/metric streaming
+Control plane (5010) -> REST + Socket.IO live monitoring`}</pre>
       </section>
 
       <section className="card">

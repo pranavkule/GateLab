@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Test-only stack runner (spawned by tests/globalSetup.js).
  *
  * Boots a miniature EdgeGate stack on dedicated test ports so automated
@@ -11,7 +11,8 @@
  */
 require('dotenv').config();
 
-process.env.MONGO_URI = 'mongodb://127.0.0.1:27017/edgegate_test';
+process.env.MONGO_URI = 'mongodb://127.0.0.1:27018/edgegate_test';
+process.env.REDIS_URL = 'redis://localhost:6380';
 process.env.BACKEND_INSTANCES = '14001:users,14002:users,14003:products,14004:orders';
 process.env.GATEWAY_PORTS = '14101,14102';
 process.env.HEALTH_CHECK_INTERVAL = '1000';

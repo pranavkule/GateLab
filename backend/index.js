@@ -4,21 +4,21 @@
  * Uses Node's cluster module so every component runs in its OWN OS process
  * (true isolation - no shared mutable routing state between gateways):
  *
- *   primary : control plane (:5000, REST + Socket.IO + MongoDB/Redis links)
- *             auth service (:5001)
- *   workers : entry LB (:3000), 3 gateways (:3001-3003), 6 backends (4001-4006)
+ *   primary : control plane (:5010, REST + Socket.IO + MongoDB/Redis links)
+ *             auth service (:5011)
+ *   workers : entry LB (:3010), 3 gateways (:3011-3013), 6 backends (4011-4016)
  */
 require('dotenv').config();
 const cluster = require('cluster');
 
-const CONTROL_PORT = Number(process.env.CONTROL_PLANE_PORT) || 5000;
-const AUTH_PORT = Number(process.env.AUTH_PORT) || 5001;
-const ENTRY_PORT = Number(process.env.ENTRY_LB_PORT) || 3000;
-const GATEWAY_PORTS = (process.env.GATEWAY_PORTS || '3001,3002,3003').split(',').map(Number);
+const CONTROL_PORT = Number(process.env.CONTROL_PLANE_PORT) || 5010;
+const AUTH_PORT = Number(process.env.AUTH_PORT) || 5011;
+const ENTRY_PORT = Number(process.env.ENTRY_LB_PORT) || 3010;
+const GATEWAY_PORTS = (process.env.GATEWAY_PORTS || '3011,3012,3013').split(',').map(Number);
 const CP_URL = `http://localhost:${CONTROL_PORT}`;
 
 function parseBackends() {
-  const raw = process.env.BACKEND_INSTANCES || '4001:users,4004:users,4002:products,4005:products,4003:orders,4006:orders';
+  const raw = process.env.BACKEND_INSTANCES || '4011:users,4014:users,4012:products,4015:products,4013:orders,4016:orders';
   return raw.split(',').map((s) => {
     const [port, service] = s.trim().split(':');
     return { port: Number(port), service };
@@ -76,13 +76,13 @@ if (cluster.isPrimary) {
   if (role === 'entrylb') {
     require('./gateway/entryLb').startEntryLb({
       port: Number(process.env.ENTRY_PORT),
-      gatewayPorts: (process.env.GATEWAY_PORTS || '3001,3002,3003').split(',').map(Number),
+      gatewayPorts: (process.env.GATEWAY_PORTS || '3011,3012,3013').split(',').map(Number),
     });
   } else if (role === 'gateway') {
     require('./gateway/gateway').startGateway({
       port: Number(process.env.GW_PORT),
       name: `gateway-${process.env.GW_PORT}`,
-      cpUrl: process.env.CP_URL || 'http://localhost:5000',
+      cpUrl: process.env.CP_URL || CP_URL,
     });
   } else if (role === 'backend') {
     require('./services/microservice').startServiceInstance({

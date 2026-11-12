@@ -1,6 +1,6 @@
 # Stops all EdgeGate processes and frees the lab ports.
 # Usage: npm run stop
-$ports = 3000,3001,3002,3003,4001,4002,4003,4004,4005,4006,5000,5001,5173
+$ports = 3010,3011,3012,3013,4011,4012,4013,4014,4015,4016,5010,5011,5174,14001,14002,14003,14004,14100,14101,14102,15000,15001
 $killed = @{}
 foreach ($port in $ports) {
   Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {

@@ -21,7 +21,7 @@ export default function Navbar({ onReset }) {
       <div className="navbar-brand">
         <Activity size={20} className="brand-icon" />
         <div>
-          <div className="brand-name">EdgeGate</div>
+          <div className="brand-name">GateLab</div>
           <div className="brand-sub">Dynamic L7 API Gateway &amp; Reverse Proxy Simulator</div>
         </div>
       </div>

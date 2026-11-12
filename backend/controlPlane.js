@@ -1,5 +1,5 @@
 /**
- * Control plane (:5000) - REST API + Socket.IO live monitoring.
+ * Control plane (:5010) - REST API + Socket.IO live monitoring.
  *
  * This is the only process that touches MongoDB for runtime data:
  *  - persists request logs (received in batches over Redis, never blocking
@@ -103,7 +103,7 @@ function createControlPlane({ port }) {
 
   // ---------- health checker ----------
   const bi = backendInstances();
-  const gwPorts = (process.env.GATEWAY_PORTS || '3001,3002,3003').split(',').map(Number);
+  const gwPorts = (process.env.GATEWAY_PORTS || '3011,3012,3013').split(',').map(Number);
   const health = startHealthChecker({
     backendPorts: bi, gatewayPorts: gwPorts,
     intervalMs: Number(process.env.HEALTH_CHECK_INTERVAL) || 3000,
@@ -206,7 +206,7 @@ function createControlPlane({ port }) {
     try {
       await publishCmd(CHANNELS.RESET, { ts: Date.now() });
       await RequestLog.deleteMany({});
-      Object.keys(metricSources).length && metricSources.clear();
+      metricSources.clear();
       history.length = 0;
       io.emit('logs-cleared');
       res.json({ ok: true, message: 'Lab counters and request logs cleared (configuration history preserved)' });

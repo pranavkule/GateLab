@@ -25,7 +25,7 @@ function createServiceApp({ port, service }) {
   app.use(express.json({ limit: '256kb' }));
 
   const sim = { down: false, latencyMs: 0, errorRate: 0 };
-  const metrics = { requests: 0, errors: 0 };
+  const metrics = { requests: 0, errors: 0, totalLatencyMs: 0 };
 
   function delay(ms) {
     return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
@@ -37,8 +37,24 @@ function createServiceApp({ port, service }) {
   }
 
   app.all('*', async (req, res) => {
-    metrics.requests += 1;
     identify(res);
+
+    // Health checks are monitoring traffic, not user API traffic:
+    // never counted in metrics and never subject to the error simulation,
+    // so the active health checker always sees the instance's REAL state.
+    if (req.path === '/health') {
+      if (sim.down) {
+        return res.status(503).json({ error: 'service_unavailable', message: `${service} instance :${port} is simulated offline`, service, instance: port, timestamp: new Date().toISOString() });
+      }
+      return res.json({ status: 'up', service, instance: port, requestCount: metrics.requests, timestamp: new Date().toISOString() });
+    }
+
+    metrics.requests += 1;
+    // Backend PROCESSING latency: request arrival -> response finished.
+    // (Health checks are excluded above; gateway-level counters carry the
+    // end-to-end latency including proxy time.)
+    const started = Date.now();
+    res.on('finish', () => { metrics.totalLatencyMs += Date.now() - started; });
 
     if (sim.down) {
       // Simulated failure = real unavailability for LB + health checks.
@@ -51,10 +67,6 @@ function createServiceApp({ port, service }) {
     if (sim.errorRate > 0 && Math.random() < sim.errorRate) {
       metrics.errors += 1;
       return res.status(500).json({ error: 'simulated_error', service, instance: port, timestamp: new Date().toISOString() });
-    }
-
-    if (req.path === '/health') {
-      return res.json({ status: 'up', service, instance: port, requestCount: metrics.requests, timestamp: new Date().toISOString() });
     }
 
     // Data endpoints (GET / POST) - the actual proxied targets.
@@ -86,11 +98,11 @@ function createServiceApp({ port, service }) {
     if (action === 'up') { sim.down = false; sim.latencyMs = 0; sim.errorRate = 0; }
     if (action === 'latency') sim.latencyMs = Number(value) || 0;
     if (action === 'errors') sim.errorRate = Math.min(Number(value) || 0, 1);
-    if (action === 'reset') metrics.requests = 0, metrics.errors = 0;
+    if (action === 'reset') metrics.requests = 0, metrics.errors = 0, metrics.totalLatencyMs = 0;
     console.log(`[svc:${service}:${port}] applied ${action}${value != null ? ` (${value})` : ''}`);
   };
 
-  app.getState = () => ({ down: sim.down, latencyMs: sim.latencyMs, errorRate: sim.errorRate, requests: metrics.requests, errors: metrics.errors });
+  app.getState = () => ({ down: sim.down, latencyMs: sim.latencyMs, errorRate: sim.errorRate, requests: metrics.requests, errors: metrics.errors, avgLatency: metrics.requests ? Math.round(metrics.totalLatencyMs / metrics.requests) : 0 });
 
   return app;
 }

@@ -1,7 +1,9 @@
 // All REST calls the dashboard makes. Live updates arrive over Socket.IO.
-const CP = 'http://localhost:5000';   // control plane (REST + Socket.IO)
-const AUTH = 'http://localhost:5001'; // authentication service
-const GATEWAY = 'http://localhost:3000'; // entry-point load balancer
+// Backend ports come from Vite env vars so two EdgeGate copies can run
+// side by side on one machine (see frontend/.env).
+const CP = `http://localhost:${import.meta.env.VITE_CONTROL_PLANE_PORT || 5010}`;   // control plane (REST + Socket.IO)
+const AUTH = `http://localhost:${import.meta.env.VITE_AUTH_PORT || 5011}`;          // authentication service
+const GATEWAY = `http://localhost:${import.meta.env.VITE_ENTRY_LB_PORT || 3010}`;   // entry-point load balancer
 
 async function json(res) {
   const body = await res.json().catch(() => ({}));

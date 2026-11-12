@@ -1,6 +1,6 @@
-const Redis = require('ioredis');
+﻿const Redis = require('ioredis');
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6381';
 
 // Channels used across processes (see docs/architecture.md)
 const CHANNELS = {

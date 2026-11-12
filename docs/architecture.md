@@ -2,14 +2,14 @@
 
 ## Components
 
-### 1. Entry-point load balancer (`:3000`, own OS process)
+### 1. Entry-point load balancer (`:3010`, own OS process)
 First hop for every client request. Maintains a round-robin cursor over **healthy
 gateways only**. Health comes from three sources:
 - **active**: polls `/gateway-health` on each gateway every 3 s,
 - **passive**: two consecutive forwarding failures open a local circuit,
 - **instant**: `edgegate:gateway-cmd` Pub/Sub events (simulation).
 
-### 2. Gateway instances (`:3001-3003`, one OS process each)
+### 2. Gateway instances (`:3011-3013`, one OS process each)
 Each gateway is a fully independent Node process (spawned by `cluster` in
 `backend/index.js`) that owns:
 - **its own in-memory routing table** (frozen object references, replaced atomically
@@ -19,14 +19,14 @@ Each gateway is a fully independent Node process (spawned by `cluster` in
 Request pipeline: **CORS → JWT middleware → universal request logger → dynamic route
 match → healthy-instance selection → reverse proxy → response + async log publish**.
 
-### 3. Microservices (`:4001-4006`, two instances per service)
+### 3. Microservices (`:4011-4016`, two instances per service)
 Simple Express services (users/products/orders). Each exposes data endpoints,
 `/health` (with real request counts) and accepts runtime simulation commands:
 `down` (health + traffic both refuse → real unavailability), `latency`,
 `errors`. Distinguishing note: simulated failure is a refusal inside the process,
 not a crash — recovery is instant.
 
-### 4. Control plane (`:5000`, in the primary process)
+### 4. Control plane (`:5010`, in the primary process)
 - REST API (config CRUD + apply, logs, simulation, reset, status).
 - **Socket.IO** server pushing: `metrics`, `gateway-health`, `backend-health`,
   `request-log`, `config-update`, `logs-cleared`.
@@ -37,7 +37,7 @@ not a crash — recovery is instant.
 - **Active health checker**: polls every backend `/health` and gateway
   `/gateway-health`, caches latency + request counts, broadcasts on change.
 
-### 5. Auth service (`:5001`)
+### 5. Auth service (`:5011`)
 Signs HS256 JWTs (`sub`, `role`, `iat`, `exp`) with a secret from environment
 variables. Provides login, demo token generation (valid/expired/invalid) and
 verification. The secret is shared only with the gateways (via env) and is never sent
@@ -58,12 +58,12 @@ startup (sync mechanism) and retry until the control plane is reachable.
 
 ## Complete request lifecycle (GET /api/users with JWT)
 
-1. Browser/generator sends `GET http://localhost:3000/api/users` + `Authorization: Bearer …`.
-2. Entry LB: healthy gateway list → round-robin → Gateway 2 (`:3002`).
+1. Browser/generator sends `GET http://localhost:3010/api/users` + `Authorization: Bearer …`.
+2. Entry LB: healthy gateway list → round-robin → Gateway 2 (`:3012`).
 3. Gateway: JWT middleware → signature, expiry and required claims verified → `req.user` set;
    auth context forwarded upstream as `x-auth-user`.
 4. Route match: `/api/users/*` → User Service, auth required.
-5. Instance selection: healthy instances `4001, 4004` → round-robin → `4004`.
+5. Instance selection: healthy instances `4011, 4014` → round-robin → `4014`.
 6. Reverse proxy: keep-alive socket, forwards method/path/headers/body, streams the
    response back (timeout 8 s → `504`; connection refused → retry once on another
    instance, then `502`).
@@ -94,3 +94,6 @@ startup (sync mechanism) and retry until the control plane is reachable.
   the request lifecycle.
 - **Two LB layers with distinct cursors**: gateway selection (entry LB) and backend
   selection (inside each gateway) are independent round-robin selectors.
+
+
+

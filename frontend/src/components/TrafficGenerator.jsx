@@ -1,14 +1,30 @@
-import React, { useState } from 'react';
-import { Send, Zap, RotateCcw, LogIn } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Send, Zap, RotateCcw, LogIn, LogOut } from 'lucide-react';
 import { api } from '../services/api';
+import { ENTRY_LB_PORT, BACKEND_INSTANCES } from '../services/ports';
 
 const ENDPOINTS = ['/api/users', '/api/products', '/api/orders'];
 const SPEEDS = { slow: 350, normal: 120, fast: 30 };
+const AUTH_LABELS = { none: 'No JWT (public/missing)', valid: 'Valid JWT', invalid: 'Invalid JWT', expired: 'Expired JWT' };
+
+// First two configured instances of the User Service (used by the failure scenario).
+const USER_INSTANCES = BACKEND_INSTANCES.users;
+
+// Client-side JWT payload decode (display only - NO verification, NO secret,
+// token never rendered). Returns null for unreadable payloads.
+function jwtPayload(token) {
+  try {
+    const part = token.split('.')[1];
+    return JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+  } catch (_) {
+    return null;
+  }
+}
 
 /**
  * Traffic generator. Sends REAL HTTP requests through the entry load
- * balancer on :3000 - every metric and log row on this page is produced
- * by these requests.
+ * balancer on :{ENTRY_LB_PORT} - every metric and log row on this page is
+ * produced by these requests.
  */
 export default function TrafficGenerator({ notify, onScenario, token, setToken }) {
   const [method, setMethod] = useState('GET');
@@ -21,15 +37,30 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('admin123');
 
+  // Re-render every second so the token validity state stays current.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const claims = token ? jwtPayload(token) : null;
+  const expiresAt = claims && claims.exp ? claims.exp * 1000 : null;
+  const tokenExpired = expiresAt != null && Date.now() >= expiresAt;
+  const tokenUsable = Boolean(token) && !tokenExpired;
+  const validAuthAvailable = auth !== 'valid' || tokenUsable;
+
   async function resolveToken() {
-    if (auth === 'none') return null;
-    if (auth === 'invalid') return 'this.is.not.a.valid.jwt';
-    try {
-      const t = await api.demoToken(auth); // valid | expired
-      return t.token;
-    } catch {
-      return null;
+    if (auth === 'none') return null;                       // 2. no Authorization header
+    if (auth === 'invalid') return 'this.is.not.a.valid.jwt'; // 3. malformed token
+    if (auth === 'expired') {
+      // Expired JWT is minted by the authentication service on purpose.
+      try { return (await api.demoToken('expired')).token; } catch { return null; }
     }
+    // auth === 'valid': ONLY the token obtained from the Authentication
+    // Service via real login - never a server-side demo mint.
+    if (!tokenUsable) return null; // guarded before send; keeps type honest
+    return token;
   }
 
   async function login() {
@@ -43,6 +74,10 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
   }
 
   async function runTraffic(n) {
+    if (!validAuthAvailable) {
+      notify('Login required - no valid JWT in memory. Log in below first.', 'warn');
+      return;
+    }
     setRunning(true);
     setResults({ sent: 0, ok: 0, failed: 0 });
     const t = await resolveToken();
@@ -60,10 +95,13 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
 
   // Quick lab scenarios (each generates real traffic)
   async function scenario(type) {
-    const t = await api.demoToken('valid').then((r) => r.token).catch(() => null);
     switch (type) {
       case 'valid-jwt':
-        await api.send({ path: '/api/users', token: t });
+        if (!tokenUsable) {
+          notify('Login required - no valid JWT in memory. Log in below first.', 'warn');
+          break;
+        }
+        await api.send({ path: '/api/users', token }); // real login token
         notify('Sent valid-JWT request to /api/users (protected)', 'info');
         break;
       case 'missing-jwt':
@@ -83,10 +121,13 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
       case 'route-change':
         onScenario('route-change');
         break;
-      case 'backend-failure':
-        await api.backendAction(4001, 'fail');
-        notify('User Service instance :4001 is now OFFLINE - watch the LB route to :4004. Recover it from the service card.', 'warn');
+      case 'backend-failure': {
+        const first = USER_INSTANCES[0];
+        const second = USER_INSTANCES[1] || first;
+        await api.backendAction(first, 'fail');
+        notify(`User Service instance :${first} is now OFFLINE - watch the LB route to :${second}. Recover it from the service card.`, 'warn');
         break;
+      }
       default:
         break;
     }
@@ -120,6 +161,11 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
           <option value="expired">Expired JWT</option>
         </select>
       </label>
+      <div className="muted tiny" style={{ marginTop: -6, marginBottom: 6 }}>
+        Requests are sent as: <b>{AUTH_LABELS[auth]}</b>
+        {auth === 'valid' && tokenUsable && <span className="c-green"> - Authenticated</span>}
+        {auth === 'valid' && !tokenUsable && <span className="c-red"> - Login required</span>}
+      </div>
 
       <div className="field-row">
         <label className="field">
@@ -136,10 +182,10 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
         </label>
       </div>
 
-      <button className="btn btn-primary btn-block" disabled={running} onClick={() => runTraffic(count)}>
-        <Send size={14} /> {running ? `Sending... (${results.sent}/${count})` : `Send ${count} Requests`}
+      <button className="btn btn-primary btn-block" disabled={running || !validAuthAvailable} onClick={() => runTraffic(count)}>
+        <Send size={14} /> {running ? `Sending... (${results.sent}/${count})` : !validAuthAvailable ? 'Login required' : `Send ${count} Requests`}
       </button>
-      <button className="btn btn-outline-blue btn-block" disabled={running} onClick={() => runTraffic(1)}>
+      <button className="btn btn-outline-blue btn-block" disabled={running || !validAuthAvailable} onClick={() => runTraffic(1)}>
         <Zap size={14} /> Send Single Request
       </button>
       <button className="btn btn-outline-blue btn-block" onClick={async () => { await api.resetLab(); notify('Lab counters reset (config history preserved)', 'info'); }}>
@@ -174,7 +220,19 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
       <button className="btn btn-outline-blue btn-block" onClick={login}>
         <LogIn size={14} /> Login &amp; Get JWT
       </button>
-      <div className="muted tiny">{token ? 'JWT in memory - used by "Valid JWT" auth mode' : 'admin / admin123'}</div>
+      {token && claims ? (
+        <div className="mini-stats">
+          <span>{tokenExpired ? 'JWT expired:' : 'Authenticated:'} <b>{claims.sub}</b></span>
+          <span className={tokenExpired ? 'c-red' : 'c-green'}>
+            JWT {tokenExpired ? 'EXPIRED' : `valid until ${new Date(expiresAt).toLocaleTimeString()}`}
+          </span>
+          <button className="btn btn-xs btn-outline-red" onClick={() => { setToken(null); notify('JWT cleared from memory', 'info'); }}>
+            <LogOut size={11} /> Clear JWT
+          </button>
+        </div>
+      ) : (
+        <div className="muted tiny">{tokenExpired ? 'JWT expired - log in again' : 'admin / admin123'}</div>
+      )}
     </section>
   );
 }

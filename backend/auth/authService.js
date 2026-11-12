@@ -1,5 +1,5 @@
 /**
- * Authentication service (:5001).
+ * Authentication service (:5011).
  *
  * POST /auth/login   { username, password } -> JWT (sub, role, iat, exp)
  * POST /auth/token   { type: valid|expired|invalid } -> demo tokens for the lab
@@ -15,6 +15,9 @@ const { signToken, verifyToken } = require('./jwt');
 
 function createAuthApp() {
   const app = express();
+  // The dashboard (http://localhost:<VITE_PORT>) calls this service
+  // directly from the browser - CORS is required or fetch() fails.
+  app.use(require('cors')());
   app.use(express.json());
 
   const expiresIn = process.env.JWT_EXPIRES_IN || '1h';

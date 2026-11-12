@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Pencil, Trash2, Save, X, History, KeyRound, Server, Layers } from 'lucide-react';
 import { api } from '../services/api';
 import { useLab } from '../hooks/useLab';
+import { ENTRY_LB_PORT, GATEWAY_PORTS, BACKEND_INSTANCES } from '../services/ports';
 
 const TARGETS = ['users', 'products', 'orders'];
 
@@ -154,13 +155,13 @@ export default function ConfigPage() {
         <section className="card">
           <div className="card-head"><h2><Server size={17} /> Runtime Topology</h2></div>
           <div className="kv">
-            <div><span>Entry load balancer</span><b>:3000 (round-robin, healthy gateways only)</b></div>
-            <div><span>Gateway instances</span><b>:3001 :3002 :3003</b></div>
-            <div><span>User Service</span><b>:4001 :4004</b></div>
-            <div><span>Product Service</span><b>:4002 :4005</b></div>
-            <div><span>Order Service</span><b>:4003 :4006</b></div>
-            <div><span>Control plane</span><b>:5000 (REST + Socket.IO)</b></div>
-            <div><span>Auth service</span><b>:5001</b></div>
+            <div><span>Entry load balancer</span><b>:{ENTRY_LB_PORT} (round-robin, healthy gateways only)</b></div>
+            <div><span>Gateway instances</span><b>{GATEWAY_PORTS.map((p) => `:${p}`).join(' ')}</b></div>
+            {Object.keys(BACKEND_INSTANCES).map((key) => (
+              <div key={key}><span>{key.charAt(0).toUpperCase() + key.slice(1)} Service</span><b>{BACKEND_INSTANCES[key].map((p) => `:${p}`).join(' ')}</b></div>
+            ))}
+            <div><span>Control plane</span><b>:{import.meta.env.VITE_CONTROL_PLANE_PORT || 5010} (REST + Socket.IO)</b></div>
+            <div><span>Auth service</span><b>:{import.meta.env.VITE_AUTH_PORT || 5011}</b></div>
           </div>
         </section>
       </div>

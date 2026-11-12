@@ -197,7 +197,7 @@ async function startGateway({ port, name, cpUrl }) {
   let lastRequests = 0;
   const metricsTimer = setInterval(() => {
     const m = registry.state.metrics;
-    const rps = m.requests - lastRequests;
+    const rps = Math.max(0, m.requests - lastRequests);
     lastRequests = m.requests;
     publisher.publish(CHANNELS.METRICS, JSON.stringify({
       source: name, kind: 'gateway',

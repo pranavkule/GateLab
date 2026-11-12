@@ -2,7 +2,7 @@ require('dotenv').config();
 
 // Service catalog: targetService key -> instances (from env or defaults).
 function parseBackendInstances() {
-  const raw = process.env.BACKEND_INSTANCES || '4001:users,4004:users,4002:products,4005:products,4003:orders,4006:orders';
+  const raw = process.env.BACKEND_INSTANCES || '4011:users,4014:users,4012:products,4015:products,4013:orders,4016:orders';
   const list = raw.split(',').map((s) => {
     const [port, service] = s.trim().split(':');
     return { port: Number(port), service };

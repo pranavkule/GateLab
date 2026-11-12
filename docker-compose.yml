@@ -1,17 +1,15 @@
 services:
   mongodb:
     image: mongo:7
-    container_name: edgegate-mongo
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
 
   redis:
     image: redis:7-alpine
-    container_name: edgegate-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
 volumes:
   mongo_data:

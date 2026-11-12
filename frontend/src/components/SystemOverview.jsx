@@ -11,7 +11,9 @@ export default function SystemOverview({ overview, history, connected }) {
     { label: 'Avg Latency', value: `${overview.avgLatency} ms`, icon: Timer, color: 'blue' },
     { label: 'Throughput', value: `${overview.throughputRps}/s`, icon: Gauge, color: 'blue' },
   ];
-  const chartData = (history || []).map((h, i) => ({ t: i, rps: h.rps, latency: h.latency }));
+  // Real 1 s snapshots from the entry load balancer (ts, requests-per-second).
+  const chartData = (history || []).map((h) => ({ ts: h.ts, rps: h.rps }));
+  const timeLabel = (ts) => new Date(ts).toLocaleTimeString();
 
   return (
     <section className="card">
@@ -40,10 +42,14 @@ export default function SystemOverview({ overview, history, connected }) {
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5effb" />
-            <XAxis dataKey="t" tick={{ fontSize: 10, fill: '#64748b' }} />
+            <XAxis dataKey="ts" tickFormatter={timeLabel} tick={{ fontSize: 10, fill: '#64748b' }} />
             <YAxis tick={{ fontSize: 10, fill: '#64748b' }} allowDecimals={false} />
-            <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v, n) => [v, n === 'rps' ? 'req/s' : 'latency ms']} />
-            <Area type="monotone" dataKey="rps" stroke="#2563eb" fill="url(#gRps)" strokeWidth={2} name="req/s" />
+            <Tooltip
+              contentStyle={{ fontSize: 12 }}
+              labelFormatter={(ts) => timeLabel(ts)}
+              formatter={(v) => [`${v} req/s`, 'Throughput']}
+            />
+            <Area type="monotone" dataKey="rps" stroke="#2563eb" fill="url(#gRps)" strokeWidth={2} name="Throughput" unit=" req/s" />
           </AreaChart>
         </ResponsiveContainer>
         <div className="chart-caption">Throughput (requests per second, last 60 s)</div>

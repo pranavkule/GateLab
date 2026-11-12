@@ -14,7 +14,7 @@ const state = {
   configVersion: 0,
   // Backend instance health as known locally: { '4001': {healthy:true, failures:0} }
   backends: {},
-  // Gateway health as known locally (used by the entry LB): { '3001': {healthy:true} }
+  // Gateway health as known locally (used by the entry LB): { '3011': {healthy:true} }
   gateways: {},
   // Local metrics counters for this process.
   metrics: { requests: 0, success: 0, failed: 0, unauthorized: 0, totalLatencyMs: 0 },
