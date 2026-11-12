@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PID_FILE = path.join(__dirname, '.test-stack.pid');
-const READY_URL = 'http://localhost:15000/api/status';
+const READY_URL = 'http://localhost:15000/health';
 
 module.exports = async function globalSetup() {
   const child = spawn(process.execPath, [path.join(__dirname, 'stackRunner.js')], { stdio: 'inherit' });

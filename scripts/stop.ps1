@@ -4,14 +4,14 @@ $ports = 3010,3011,3012,3013,4011,4012,4013,4014,4015,4016,5010,5011,5174,14001,
 $killed = @{}
 foreach ($port in $ports) {
   Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-    $pid = $_.OwningProcess
-    if ($pid -and -not $killed[$pid] -and $pid -ne $PID) {
+    $processId = $_.OwningProcess
+    if ($processId -and -not $killed[$processId] -and $processId -ne $PID) {
       try {
-        $proc = Get-Process -Id $pid -ErrorAction Stop
+        $proc = Get-Process -Id $processId -ErrorAction Stop
         if ($proc.ProcessName -match 'node|npm|cmd|powershell') {
-          Stop-Process -Id $pid -Force -ErrorAction Stop
-          Write-Host "Stopped pid $pid ($($proc.ProcessName)) listening on :$port"
-          $killed[$pid] = $true
+          Stop-Process -Id $processId -Force -ErrorAction Stop
+          Write-Host "Stopped pid $processId ($($proc.ProcessName)) listening on :$port"
+          $killed[$processId] = $true
         }
       } catch {}
     }

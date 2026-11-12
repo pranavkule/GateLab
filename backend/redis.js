@@ -1,6 +1,21 @@
-﻿const Redis = require('ioredis');
+require('dotenv').config();
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6381';
+﻿const Redis = require('ioredis');
+const REDIS_URL = process.env.REDIS_URL ||
+  (process.env.NODE_ENV === 'production' ? null : 'redis://localhost:6381');
+
+if (!REDIS_URL) {
+  throw new Error('REDIS_URL is required in production');
+}
+if (process.env.NODE_ENV === 'production') {
+  let parsed;
+  try { parsed = new URL(REDIS_URL); } catch (_) {
+    throw new Error('REDIS_URL must be a valid authenticated Redis connection URL in production');
+  }
+  if (!parsed.password) {
+    throw new Error('REDIS_URL must include a Redis password in production');
+  }
+}
 
 // Channels used across processes (see docs/architecture.md)
 const CHANNELS = {

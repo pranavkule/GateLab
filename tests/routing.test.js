@@ -11,7 +11,7 @@ async function latestConfig() {
   return res.json();
 }
 async function applyRoutes(routes) {
-  const res = await fetch(`${CP}/api/config`, {
+  const res = await cpFetch('/api/config', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ routes }),
   });
@@ -21,6 +21,14 @@ async function applyRoutes(routes) {
 async function validToken() {
   const res = await fetch(`${CP}/api/demo-token?type=valid`);
   return (await res.json()).token;
+}
+
+async function cpFetch(path, options = {}) {
+  const token = await validToken();
+  return fetch(`${CP}${path}`, {
+    ...options,
+    headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
+  });
 }
 
 afterAll(async () => {
@@ -48,14 +56,14 @@ describe('Dynamic routing', () => {
 
   test('TEST 6: all gateway instances converge on the same config version', async () => {
     const cfg = await latestConfig();
-    const g1 = await (await fetch('http://localhost:14101/gateway-health')).json();
-    const g2 = await (await fetch('http://localhost:14102/gateway-health')).json();
+    const g1 = await (await fetch('http://127.0.0.1:14101/gateway-health')).json();
+    const g2 = await (await fetch('http://127.0.0.1:14102/gateway-health')).json();
     expect(g1.configVersion).toBe(cfg.version);
     expect(g2.configVersion).toBe(cfg.version);
   });
 
   test('invalid configuration is rejected with a validation error', async () => {
-    const res = await fetch(`${CP}/api/config`, {
+    const res = await cpFetch('/api/config', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ routes: [{ id: 'x', path: 'nope', targetService: 'nope', authRequired: false }] }),
     });
@@ -80,7 +88,7 @@ describe('Load balancing', () => {
 
 describe('Failure simulation and recovery', () => {
   test('TEST 8: failed backend instance receives no new traffic', async () => {
-    await fetch(`${CP}/api/backend/14001/fail`, { method: 'POST' });
+    await cpFetch('/api/backend/14001/fail', { method: 'POST' });
     await new Promise((r) => setTimeout(r, 300));
     const token = await validToken();
     for (let i = 0; i < 10; i++) {
@@ -91,7 +99,7 @@ describe('Failure simulation and recovery', () => {
   });
 
   test('TEST 9: failed gateway instance receives no new traffic', async () => {
-    await fetch(`${CP}/api/gateway/14102/fail`, { method: 'POST' });
+    await cpFetch('/api/gateway/14102/fail', { method: 'POST' });
     await new Promise((r) => setTimeout(r, 300));
     for (let i = 0; i < 10; i++) {
       const res = await request(ENTRY).get('/api/products');
@@ -101,11 +109,11 @@ describe('Failure simulation and recovery', () => {
   });
 
   test('TEST 10: recovered instances rejoin the round-robin', async () => {
-    await fetch(`${CP}/api/gateway/14102/recover`, { method: 'POST' });
-    await fetch(`${CP}/api/backend/14001/recover`, { method: 'POST' });
+    await cpFetch('/api/gateway/14102/recover', { method: 'POST' });
+    await cpFetch('/api/backend/14001/recover', { method: 'POST' });
     await new Promise((r) => setTimeout(r, 1600)); // let active health checks confirm
 
-    const h1 = await (await fetch('http://localhost:14102/gateway-health')).json();
+    const h1 = await (await fetch('http://127.0.0.1:14102/gateway-health')).json();
     expect(h1.status).toBe('up');
 
     const token = await validToken();
@@ -119,13 +127,13 @@ describe('Failure simulation and recovery', () => {
   });
 
   test('all backend instances down -> 503 Service Unavailable', async () => {
-    await fetch(`${CP}/api/backend/14001/fail`, { method: 'POST' });
-    await fetch(`${CP}/api/backend/14002/fail`, { method: 'POST' });
+    await cpFetch('/api/backend/14001/fail', { method: 'POST' });
+    await cpFetch('/api/backend/14002/fail', { method: 'POST' });
     await new Promise((r) => setTimeout(r, 300));
     const token = await validToken();
     const res = await request(ENTRY).get('/api/users').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(503);
-    await fetch(`${CP}/api/backend/14001/recover`, { method: 'POST' });
-    await fetch(`${CP}/api/backend/14002/recover`, { method: 'POST' });
+    await cpFetch('/api/backend/14001/recover', { method: 'POST' });
+    await cpFetch('/api/backend/14002/recover', { method: 'POST' });
   });
 });

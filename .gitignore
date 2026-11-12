@@ -3,3 +3,6 @@ frontend/node_modules/
 frontend/dist/
 *.log
 tests/.test-stack.pid
+.env
+.env.*
+!.env.example

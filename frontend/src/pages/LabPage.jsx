@@ -6,10 +6,11 @@ import SystemOverview from '../components/SystemOverview';
 import RequestLogs from '../components/RequestLogs';
 import { api } from '../services/api';
 import { useLab } from '../hooks/useLab';
+import { useStore } from '../store/StoreContext';
 
 export default function LabPage() {
   const lab = useLab();
-  const [token, setToken] = useState(null);
+  const { token, login, logout } = useStore();
   const [autoRecover, setAutoRecover] = useState(null);
 
   // Dynamic Route Change scenario: swap /api/products/* -> orders, then back.
@@ -38,7 +39,7 @@ export default function LabPage() {
             notify={lab.notify}
             onScenario={scenarioRouteChange}
             token={token}
-            setToken={setToken}
+            setToken={(result) => result ? login(result) : logout()}
           />
         </aside>
 

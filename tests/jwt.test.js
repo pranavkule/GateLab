@@ -48,7 +48,7 @@ describe('JWT authentication', () => {
   test('auth service login issues verifiable JWT', async () => {
     const login = await fetch('http://localhost:15001/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'admin', password: 'admin123' }),
+      body: JSON.stringify({ username: 'edgegate-test-admin', password: 'test-only-password-for-jest' }),
     });
     expect(login.status).toBe(200);
     const { token } = await login.json();
@@ -58,6 +58,6 @@ describe('JWT authentication', () => {
     });
     const verdict = await verify.json();
     expect(verdict.valid).toBe(true);
-    expect(verdict.payload.sub).toBe('admin');
+    expect(verdict.payload.sub).toBe('edgegate-test-admin');
   });
 });

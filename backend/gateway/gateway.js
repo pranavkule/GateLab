@@ -20,6 +20,7 @@ const { createRoundRobin } = require('../loadBalancer/roundRobin');
 const registry = require('../registry');
 const { CHANNELS, createSubscriber, createRedis } = require('../redis');
 const { backendInstances } = require('../config');
+const { corsMiddleware } = require('../security/cors');
 
 function matchRoute(routes, path) {
   // '/api/users/*' matches '/api/users' and '/api/users/42'
@@ -35,7 +36,7 @@ function createGatewayApp({ name, publishFn }) {
   const gwState = { selfDown: false }; // simulated gateway failure flag
 
   const app = express();
-  app.use(require('cors')());
+  app.use(corsMiddleware());
   const serviceInstances = backendInstances();
   const rr = createRoundRobin();
 
@@ -207,7 +208,7 @@ async function startGateway({ port, name, cpUrl }) {
     }));
   }, 1000);
 
-  server.listen(port, () => console.log(`[${name}] listening on :${port}`));
+  server.listen(port, '127.0.0.1', () => console.log(`[${name}] listening on 127.0.0.1:${port}`));
 
   async function close() {
     clearInterval(metricsTimer);

@@ -53,16 +53,29 @@ observability â€” all with **real** HTTP traffic, real metrics and real per
       v                      v                            v
 +-----------+ +-------------+ +-----------+   (2 instances each)
 | User Svc  | | Product Svc | | Order Svc |
-| 4011/4014 | | 4002/4005   | | 4013/4016 |
+| 4011/4014 | | 4012/4015   | | 4013/4016 |
 +-----------+ +-------------+ +-----------+
 
-MongoDB (:27019)   -> routing config versions, audit history, request logs, users
-Redis (:6381)      -> config Pub/Sub, async log/metric streaming
+MongoDB (:27018)   -> routing config versions, audit history, request logs, users, products, orders
+Redis (:6380)      -> config Pub/Sub, async log/metric streaming
 Control plane (5010)-> REST API + Socket.IO live monitoring + health checker
 Auth service(5011) -> JWT login / token / verify
 ```
 
 Component details and the full request lifecycle: [docs/architecture.md](docs/architecture.md)
+
+### Runtime responsibilities
+
+| Component | Responsibility |
+|---|---|
+| Entry load balancer (:3010) | Sends requests to healthy gateway instances using round-robin selection. |
+| Gateways (:3011-3013) | Verify JWTs on protected routes, apply the current dynamic route table, select healthy service instances, and proxy requests. |
+| User Service (:4011, :4014) | Register/login support through Auth Service, customer profile reads/updates, and admin user lookup; profiles are stored in MongoDB. |
+| Product Service (:4012, :4015) | Public catalog/search/filtering and admin product management; products and inventory are stored in MongoDB. |
+| Order Service (:4013, :4016) | Customer orders/history and admin order management; transactions protect inventory deduction, order creation, and cancellation restoration. |
+| Auth Service (:5011) | Customer registration/login and development-only demo login; issues JWTs without exposing the signing secret to the browser. |
+| Control Plane (:5010) | Administrator-protected configuration, fault controls, logs/metrics, health checks, and Socket.IO updates for the Virtual Lab. |
+| MongoDB / Redis | MongoDB persists application/configuration data; Redis carries Pub/Sub snapshots, commands, logs, and metrics. |
 
 ## Folder structure
 
@@ -74,6 +87,7 @@ backend/
   db.js  redis.js       MongoDB + Redis connection handling
   config/               service catalog, default routes, config manager (validate/persist/publish)
   auth/                 JWT helpers + auth service (:5011)
+  security/             shared HTTP CORS policy
   gateway/              gateway instance, entry load balancer
   middleware/           JWT verification middleware
   proxy/                reverse proxy implementation
@@ -81,14 +95,16 @@ backend/
   services/             microservice instance factory (6 instances)
   health/               active health checker
   models/               Mongoose schemas + indexes
-  scripts/seed.js       initial routing config + demo user
+  scripts/seed.js       initial routing config + development demo user
+  scripts/provisionAdmin.js  interactive first-admin provisioning
 frontend/
   src/components/       Navbar, SystemOverview, Gateways, Backends, TrafficGenerator, RequestLogs
   src/pages/            LabPage, ConfigPage, GuidePage
+  src/store/            Customer storefront, authentication, cart, checkout, account and admin pages
   src/services/         REST client, Socket.IO client
   src/hooks/useLab.js   live state hook (REST bootstrap + Socket.IO streams)
   src/styles/lab.css
-tests/                  Jest + Supertest + autocannon (12 acceptance scenarios)
+tests/                  Jest + Supertest + autocannon (7 suites, 75 tests)
 scripts/stop.ps1        frees all lab ports
 docker-compose.yml      mongo:7 + redis:7
 ```
@@ -97,9 +113,33 @@ docker-compose.yml      mongo:7 + redis:7
 
 ```bash
 npm run install:all     # installs root + frontend dependencies
-npm run db:up           # starts MongoDB + Redis via Docker Compose
+npm run db:up           # starts MongoDB (single-node replica set) + Redis via Docker Compose
 npm run seed            # seeds routing config v1 + demo user (idempotent)
+npm run seed:data       # seeds e-commerce data: user profiles, products, sample orders (idempotent)
+npm run admin:provision # interactively provisions the first administrator
 ```
+
+`seed` and `seed:data` are development-only and refuse to run when
+`NODE_ENV=production`. The administrator provisioning command prompts for
+identity details and accepts the password without echoing it; it refuses to
+promote an existing customer or create another administrator. Do not copy
+development seed accounts into a production database.
+
+Root `.env` and `frontend/.env` are local-only and ignored by Git. Start from
+`.env.example`, replace its placeholders locally, and use the same `JWT_SECRET`
+for Auth, Gateway, and Product Service processes. Production startup requires
+an explicit JWT secret, configured browser origins, and authenticated MongoDB
+and Redis connection URLs. The JWT key is never a frontend/Vite variable.
+
+> **MongoDB transactions note:** the Order Service (P1.4) requires multi-document
+> ACID transactions, so `docker-compose.yml` runs MongoDB as a **single-node
+> replica set** (`rs0`, listening on `27018` inside the container and mapped 1:1
+> to the host). The replica set self-initializes via the container healthcheck on
+> the first `npm run db:up`. If you have an older `mongo_data` volume that was
+> created before this change, simply run `docker compose up -d` again - the
+> healthcheck initiates the replica set automatically and your data is preserved.
+> Verify with:
+> `docker exec sd_microproject-mongodb-1 mongosh --quiet --port 27018 --eval "rs.status().ok"` (should print `1`).
 
 ## Startup
 
@@ -108,6 +148,48 @@ npm run dev             # backend (11 processes via cluster) + frontend (Vite)
 ```
 
 Open **http://localhost:5174**.
+
+The customer-facing storefront is available at **http://localhost:5174/store**.
+It is a separate application area from the Virtual Lab: customers can browse the
+live product catalog, register or sign in, manage a local cart, place orders,
+and view their profile and order history. Administrators can manage products
+and orders from the store's Admin page. Store traffic goes through the entry
+load balancer (:3010); registration and customer login use the Auth service
+(:5011). Protected service operations still enforce authorization in the
+backend.
+
+### Customer workflow
+
+1. Open `/store` to browse the live catalog, search, filter by category, and view product stock.
+2. Register at `/store/register`, or sign in at `/store/login`. The local-only
+   `npm run seed:data` command creates sample accounts and products; production
+   seeding is blocked.
+3. Add items to the local cart, adjust quantities, then continue to checkout.
+   The Order Service checks current inventory and calculates the final prices and total.
+4. Review the confirmation and order ID, then use **My orders** and **My account**
+   to see order history and update profile details.
+5. Log out to clear the customer session. Checkout, account, and order pages
+   require authentication.
+
+No payment is collected. The cart is browser-local; the MongoDB catalog and
+Order Service remain authoritative for prices and inventory.
+
+### Admin workflow
+
+Sign in at `/store/login` with an administrator provisioned for the current
+database, then open **Admin**. The Products tab
+lists active products and supports create, edit, and soft-delete operations.
+The Orders tab supports status/customer filters, order details, and valid status
+transitions. The Product and Order Services enforce admin authorization; hiding
+the admin link in the UI is not the security boundary. Discontinued products
+remain in storage for order history, but the current admin API/UI has no restore
+operation.
+
+The Virtual Lab and Configuration dashboard require administrator JWTs for
+monitoring, configuration, logs, reset, fault injection, and Socket.IO updates.
+The development demo login and demo-token endpoints are disabled in production.
+Gateways may read the current routing snapshot during startup; the public
+`/health` endpoint returns only a minimal readiness status.
 
 Stop everything (including the dev processes started outside the terminal):
 
@@ -129,8 +211,8 @@ same machine (which owns the classic ports 3000-3003, 4001-4006, 5000, 5001, 517
 | Backend instances | :4011-4016 | :4001-4006 |
 | Control plane / Auth | :5010 / :5011 | :5000 / :5001 |
 | Frontend (Vite) | :5174 | :5173 |
-| MongoDB (Docker) | host 27019 → container 27017 | host 27017 |
-| Redis (Docker) | host 6381 → container 6379 | host 6379 |
+| MongoDB (Docker) | host 27018 -> container 27018 | host 27017 |
+| Redis (Docker) | host 6380 → container 6379 | host 6379 |
 
 Both copies need their own containers: this copy's compose uses container names
 `edgegate2-mongo` / `edgegate2-redis` and volume `edgegate2_mongo_data`, so
@@ -146,8 +228,8 @@ To run both: start the other project normally, then run this project's commands 
 | `CONTROL_PLANE_PORT` | 5010 | REST + Socket.IO |
 | `AUTH_PORT` | 5011 | Auth service |
 | `BACKEND_INSTANCES` | 4011:users,... | port:serviceKey list (2 per service) |
-| `MONGO_URI` | mongodb://127.0.0.1:27019/edgegate | MongoDB connection (host 27019 -> container 27017) |
-| `REDIS_URL` | redis://localhost:6381 | Redis connection, Pub/Sub only (host 6381 -> container 6379) |
+| `MONGO_URI` | mongodb://127.0.0.1:27018/edgegate | MongoDB connection (host and container port 27018) |
+| `REDIS_URL` | redis://localhost:6380 | Redis connection, Pub/Sub only (host 6380 -> container 6379) |
 | `JWT_SECRET` | dev value | JWT signing secret (server-only) |
 | `JWT_EXPIRES_IN` | 1h | Token lifetime |
 | `DEMO_USER` / `DEMO_PASSWORD` | admin / admin123 | Seeded demo login |
@@ -171,15 +253,107 @@ A dev-only `.env` is committed for convenience â€” replace `JWT_SECRET` for
 
 | Endpoint | Auth | Description |
 |---|---|---|
-| `GET /api/products` | public | Product Service |
+| `GET /api/products` | public | Product catalog - Product Service business logic (MongoDB, `?category=&search=&page=&limit=`) |
+| `GET /api/products/:id` | public | Single active product (404 if unknown/malformed id) |
+| `POST /api/products` | JWT (admin) | Create product - Product Service business logic (MongoDB) |
+| `PUT /api/products/:id` | JWT (admin) | Update product details (partial updates) |
+| `DELETE /api/products/:id` | JWT (admin) | Soft delete (status â†’ `discontinued`; record kept for order history) |
 | `GET /api/users` | JWT | User Service (401 without/invalid/expired token) |
 | `GET /api/orders` | JWT | Order Service |
 | `POST /api/<service>` | per route | Creates data on the target service |
+| `GET /api/users/me` | JWT (e-commerce user) | Own profile - User Service business logic (MongoDB) |
+| `PUT /api/users/me` | JWT (customer) | Update own profile (role/email/password not editable) |
+| `GET /api/users/:id` | JWT (admin) | Admin-only user lookup |
 | `GET /gateway-health` (per instance) | - | Gateway self status (also used by the entry LB) |
+
+### Product Service business logic (MongoDB)
+
+Browsing is public; admin operations (create/update/delete) verify the Bearer
+JWT **inside the service** using the same shared-secret `verifyToken` the
+gateway uses - the gateway deliberately does not evaluate JWTs on public
+routes, so no gateway middleware was modified. The role is read from the
+verified token payload only (body/query role fields are never trusted).
+
+```bash
+# Admin login (seeded profile; also any /auth/register'd admin)
+curl -X POST http://localhost:5011/auth/customer-login -H "Content-Type: application/json" -d "{\"email\":\"aarav.mehta@example.com\",\"password\":\"Admin@123\"}"
+
+# Public browsing (active products only; filters/search/pagination)
+curl "http://localhost:3010/api/products?category=Audio&search=wireless&page=1&limit=12"
+curl http://localhost:3010/api/products/<productId>
+
+# Admin management (Bearer = token from customer-login above)
+curl -X POST http://localhost:3010/api/products -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d "{\"name\":\"Wireless Mouse M590\",\"price\":899,\"category\":\"Audio\",\"stock\":25,\"description\":\"Silent-click wireless mouse\"}"
+curl -X PUT http://localhost:3010/api/products/<productId> -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d "{\"price\":799,\"stock\":30}"
+curl -X DELETE http://localhost:3010/api/products/<productId> -H "Authorization: Bearer <token>"   # soft delete
+```
+
+Rules: prices are finite numbers â‰¤ 10,000,000; stock is a non-negative integer
+(â‰¤ 1,000,000); product names are unique (409 on duplicates); inventory lives
+only in MongoDB and is written atomically, so stock can never go negative.
+
+### Order Service business logic (MongoDB)
+
+Identity and role come from the gateway-verified auth context (`x-auth-user`,
+set for the JWT-protected `/api/orders/*` route) - never from client input.
+All prices, totals and order status are computed/stored server-side.
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `POST /api/orders` | JWT (customer/admin) | Place an order: validates products (active + stock), deducts stock atomically inside a MongoDB transaction, snapshots purchase-time name/price |
+| `GET /api/orders` | JWT | Own order history, newest first (`?page=&limit=`) |
+| `GET /api/orders/:id` | JWT | Own order; admins may retrieve any order |
+| `GET /api/orders/admin` | JWT (admin) | Order list with filters `?status=&user=&page=&limit=` (customers: 403) |
+| `PUT /api/orders/admin/:id/status` | JWT (admin) | Validated status transition (short form `PUT /api/orders/:id/status` also accepted) |
+
+> Note: admin order management lives under the **existing** `/api/orders/*`
+> gateway route (`/api/orders/admin...`) because `/api/admin/*` has no gateway
+> route and the routing config was not modified in this phase.
+
+```bash
+# Customer login
+curl -X POST http://localhost:5011/auth/customer-login -H "Content-Type: application/json" -d "{\"email\":\"diya.sharma@example.com\",\"password\":\"Customer@123\"}"
+
+# Place an order (prices/total calculated by the server from the catalog)
+curl -X POST http://localhost:3010/api/orders -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d "{\"items\":[{\"productId\":\"<productId>\",\"quantity\":2}],\"clientRequestId\":\"my-request-1\"}"
+
+# Order history / single order
+curl http://localhost:3010/api/orders -H "Authorization: Bearer <token>"
+curl http://localhost:3010/api/orders/<orderId> -H "Authorization: Bearer <token>"
+
+# Admin: list + manage (Bearer = admin token from customer-login)
+curl "http://localhost:3010/api/orders/admin?status=pending&page=1&limit=10" -H "Authorization: Bearer <adminToken>"
+curl -X PUT http://localhost:3010/api/orders/admin/<orderId>/status -H "Authorization: Bearer <adminToken>" -H "Content-Type: application/json" -d "{\"status\":\"confirmed\"}"
+```
+
+**Inventory & transaction strategy:** every order runs inside ONE MongoDB
+transaction covering all stock deductions and order creation. Each item is
+deducted with the guarded atomic update
+`Product.findOneAndUpdate({ _id, status: 'active', stock: { $gte: quantity } }, { $inc: { stock: -quantity } })`:
+- stock can never go below zero (the `$gte` guard),
+- concurrent orders competing for the same stock: a loser finds no matching
+  document, its whole transaction aborts and ALL its deductions roll back
+  (no partial inventory, no double deduction),
+- the order document only exists if every deduction committed (ACID).
+
+Cancellations restore stock with `$inc` **inside the same transaction** as a
+conditional status change
+(`findOneAndUpdate({ _id, status: { $in: ['pending','confirmed'] } })`), so
+stock is restored **at most once** no matter how many cancel requests race.
+Cancelled/delivered are terminal states. Re-submitting an order with the same
+optional `clientRequestId` returns the existing order instead of creating a
+duplicate (unique partial index per user).
+
+**Status flow:** `pending â†’ confirmed â†’ shipped â†’ delivered`, with
+`pending`/`confirmed` also cancellable. Invalid transitions are rejected (400)
+and prices are always snapshotted at purchase time - later catalog edits never
+rewrite order history.
 
 ### Auth service (:5011)
 
 - `POST /auth/login` `{username,password}` â†’ `{token, user}` (demo: admin/admin123)
+- `POST /auth/register` `{name,email,password,phone?,address?}` -> `201 {user}` - e-commerce customer sign-up (UserProfile, scrypt-hashed password, role always `customer`)
+- `POST /auth/customer-login` `{email,password}` -> `{token,user}` - UserProfile login; returns the SAME JWT mechanism (same secret/expiry) with `sub` = UserProfile id and the profile's role (`customer`/`admin`)
 - `POST /auth/token` `{type: valid|expired|invalid}` â†’ demo token for the lab
 - `POST /auth/verify` `{token}` â†’ `{valid, payload|error}`
 - `GET /auth/me` (Bearer) â†’ payload
@@ -237,26 +411,54 @@ A dev-only `.env` is committed for convenience â€” replace `JWT_SECRET` for
 
 ```bash
 npm run db:up        # tests need MongoDB + Redis
-npm test             # 17 tests: JWT (1-4), dynamic routing (5,6), LB (7),
-                     # failure/recovery (8-10), logs (11), validation edge cases
-npm run test:performance   # autocannon load through the entry LB (scenario 12)
+npm test             # all Jest suites, including the performance test
+npm run test:performance   # run the autocannon performance test by itself
+npm run build --prefix frontend
 ```
 
 The tests boot a dedicated mini-stack on ports 14001-14102/15000-15001 with a separate
 `edgegate_test` database, so they never collide with the running dev stack.
+The latest verification run passed **7 suites and 75 tests**. The performance
+case in that run completed 358 requests at 119 requests/second, with 83 ms
+average latency and zero errors; these measurements vary by machine and load.
+
+For browser-based smoke testing, start `npm run dev`, then use
+`http://localhost:5174/store` for customer workflows and the Virtual Lab,
+Configuration, and Guide links for gateway demonstrations. Store API requests
+use the real entry load balancer and Auth Service; this browser walkthrough is
+manual rather than a checked-in Playwright suite.
 
 ## Performance testing
 
 `npm run test:performance` runs autocannon for 3 s through the entry load balancer and
 prints the **measured** throughput, average latency and error count, asserting 0 errors.
-Reference result on a mid-range Windows laptop: ~475 req/s, ~21 ms average latency, 0 errors.
+Results depend on the machine, database state, and other running processes.
+
+## Known limitations
+
+- MongoDB is a single-node replica set: transactions work locally, but the database
+  has no replica-level availability or failover.
+- Simulated fail/recover controls exercise service health behavior without killing
+  OS processes. The launcher does not automatically respawn a worker that exits unexpectedly.
+- In this Windows verification run, terminating a live backend worker also stopped
+  the backend launcher and its concurrently managed dev stack. Hard-process crash
+  recovery is therefore not claimed; injected fail/recover behavior was verified.
+- Passive backend/gateway circuits use consecutive forwarding failures and active
+  health checks. Simulated HTTP error responses are returned by the service and do
+  not represent a crashed process; circuit behavior is intentionally simple.
+- The admin product listing exposes active products only. Soft-deleted products
+  are retained for past orders but cannot currently be restored through the API.
+- The storefront has no payment integration; local cart contents are not persisted
+  to the server.
+- The frontend build succeeds but currently reports existing JSX text-character
+  warnings in Virtual Lab labels and a large bundled-JavaScript chunk warning.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `Failed to start EdgeGate` / Mongo timeouts | `npm run db:up`, wait a few seconds, retry |
-| Redis errors | `docker ps` â€” the Redis container must be up on 6381 |
+| Redis errors | `docker ps` â€” the Redis container must be up on 6380 |
 | Port already in use | `npm run stop` |
 | Tests fail to boot | The test stack needs the same DB containers; check `edgegate_test` is creatable |
 | Dashboard shows "Offline" | Control plane (:5010) not running â€” restart `npm run dev` |

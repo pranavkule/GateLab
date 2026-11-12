@@ -15,24 +15,42 @@ const manager = require('./config/manager');
 const { CHANNELS, createSubscriber, createRedis } = require('./redis');
 const { SERVICE_META, backendInstances } = require('./config');
 const { startHealthChecker } = require('./health/checker');
-const { signToken } = require('./auth/jwt');
+const { signToken, verifyToken } = require('./auth/jwt');
+const { corsMiddleware, getAllowedOrigins, isAllowedOrigin } = require('./security/cors');
 const registry = require('./registry');
 
 function createControlPlane({ port }) {
   const app = express();
+  const isProduction = process.env.NODE_ENV === 'production';
+  app.use(corsMiddleware());
   app.use(express.json({ limit: '512kb' }));
 
-  // Simple CORS for the Vite dev server.
-  app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
-    next();
+  app.get('/health', (req, res) => {
+    res.json({ status: 'up' });
   });
 
   const server = http.createServer(app);
-  const io = new Server(server, { cors: { origin: '*' } });
+  const allowedOrigins = getAllowedOrigins();
+  const io = new Server(server, {
+    cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
+    allowRequest: (req, callback) => callback(null, isAllowedOrigin(req.headers.origin)),
+  });
+  io.use((socket, next) => {
+    const authToken = socket.handshake.auth && socket.handshake.auth.token;
+    const authorization = socket.handshake.headers.authorization || '';
+    const token = typeof authToken === 'string'
+      ? authToken
+      : authorization.startsWith('Bearer ') ? authorization.slice(7) : null;
+    const result = token ? verifyToken(token) : { ok: false };
+    if (!result.ok) return next(new Error('unauthorized'));
+    if (result.payload.role !== 'admin') return next(new Error('forbidden'));
+    const expiresAt = Number(result.payload.exp) * 1000;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return next(new Error('unauthorized'));
+    socket.data.user = result.payload;
+    const expiryTimer = setTimeout(() => socket.disconnect(true), expiresAt - Date.now());
+    socket.once('disconnect', () => clearTimeout(expiryTimer));
+    next();
+  });
   const publisher = createRedis();
 
   // Load the active configuration into the control plane's own registry so
@@ -110,6 +128,32 @@ function createControlPlane({ port }) {
     onChange: (event, snapshot) => io.emit(event, snapshot),
   });
 
+  app.get('/api/demo-token', (req, res) => {
+    if (isProduction) return res.status(404).json({ error: 'not_found' });
+    const type = req.query.type || 'valid';
+    if (type === 'valid') return res.json({ token: signToken({ sub: 'demo-admin', role: 'admin' }, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }) });
+    if (type === 'expired') return res.json({ token: signToken({ sub: 'demo-admin', role: 'admin' }, { expiresIn: '-10s' }) });
+    if (type === 'invalid') return res.json({ token: 'this.is.not.a.valid.jwt' });
+    res.status(400).json({ error: 'bad_request' });
+  });
+
+  app.use('/api', (req, res, next) => {
+    if (isProduction && req.method === 'GET' && req.path === '/demo-token') {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    // Gateways fetch only the current routing snapshot during startup.
+    if (req.method === 'GET' && req.path === '/config/latest') return next();
+
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'unauthorized', message: 'Administrator authentication required' });
+    const result = verifyToken(token);
+    if (!result.ok) return res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired administrator token' });
+    if (result.payload.role !== 'admin') return res.status(403).json({ error: 'forbidden', message: 'Administrator role required' });
+    req.user = result.payload;
+    next();
+  });
+
   // ---------- REST: configuration ----------
   app.get('/api/config/latest', async (req, res, next) => {
     try {
@@ -121,7 +165,7 @@ function createControlPlane({ port }) {
   app.put('/api/config', async (req, res, next) => {
     try {
       const { routes } = req.body || {};
-      const applied = await manager.applyRoutes(routes, 'dashboard');
+      const applied = await manager.applyRoutes(routes, String(req.user.sub));
       res.json(applied);
     } catch (e) { next(e); }
   });
@@ -211,15 +255,6 @@ function createControlPlane({ port }) {
       io.emit('logs-cleared');
       res.json({ ok: true, message: 'Lab counters and request logs cleared (configuration history preserved)' });
     } catch (e) { next(e); }
-  });
-
-  // ---------- REST: demo JWT tokens (never expose the secret) ----------
-  app.get('/api/demo-token', (req, res) => {
-    const type = req.query.type || 'valid';
-    if (type === 'valid') return res.json({ token: signToken({ sub: 'demo-student', role: 'student' }, { expiresIn: process.env.JWT_EXPIRES_IN || '1h' }) });
-    if (type === 'expired') return res.json({ token: signToken({ sub: 'demo-student', role: 'student' }, { expiresIn: '-10s' }) });
-    if (type === 'invalid') return res.json({ token: 'this.is.not.a.valid.jwt' });
-    res.status(400).json({ error: 'bad_request' });
   });
 
   // Error handler - clean JSON, no stack traces.

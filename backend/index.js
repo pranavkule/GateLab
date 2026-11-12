@@ -10,6 +10,8 @@
  */
 require('dotenv').config();
 const cluster = require('cluster');
+require('./auth/jwt');
+require('./security/cors').getAllowedOrigins();
 
 const CONTROL_PORT = Number(process.env.CONTROL_PLANE_PORT) || 5010;
 const AUTH_PORT = Number(process.env.AUTH_PORT) || 5011;

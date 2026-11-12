@@ -35,7 +35,8 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState({ sent: 0, ok: 0, failed: 0 });
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [password, setPassword] = useState('');
+  const isDevelopment = import.meta.env.DEV;
 
   // Re-render every second so the token validity state stays current.
   const [, setTick] = useState(0);
@@ -66,7 +67,7 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
   async function login() {
     try {
       const res = await api.login(username, password);
-      setToken(res.token);
+      setToken(res);
       notify(`Logged in as ${res.user.username} - valid JWT ready`, 'success');
     } catch (e) {
       notify('Login failed: ' + e.message, 'error');
@@ -158,7 +159,7 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
           <option value="none">No JWT (public/missing)</option>
           <option value="valid">Valid JWT</option>
           <option value="invalid">Invalid JWT</option>
-          <option value="expired">Expired JWT</option>
+          {isDevelopment && <option value="expired">Expired JWT</option>}
         </select>
       </label>
       <div className="muted tiny" style={{ marginTop: -6, marginBottom: 6 }}>
@@ -206,33 +207,33 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
         <button className="btn btn-scenario" onClick={() => scenario('valid-jwt')}>1. Valid JWT Request</button>
         <button className="btn btn-scenario" onClick={() => scenario('missing-jwt')}>2. Missing JWT Request</button>
         <button className="btn btn-scenario" onClick={() => scenario('invalid-jwt')}>3. Invalid JWT Request</button>
-        <button className="btn btn-scenario" onClick={() => scenario('expired-jwt')}>4. Expired JWT Request</button>
+        {isDevelopment && <button className="btn btn-scenario" onClick={() => scenario('expired-jwt')}>4. Expired JWT Request</button>}
         <button className="btn btn-scenario" onClick={() => scenario('route-change')}>5. Dynamic Route Change</button>
         <button className="btn btn-scenario" onClick={() => scenario('backend-failure')}>6. Backend Failure</button>
       </div>
 
-      <div className="divider" />
-      <div className="card-head"><h3>Demo Login</h3></div>
-      <div className="field-row">
-        <label className="field"><span>User</span><input value={username} onChange={(e) => setUsername(e.target.value)} /></label>
-        <label className="field"><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-      </div>
-      <button className="btn btn-outline-blue btn-block" onClick={login}>
-        <LogIn size={14} /> Login &amp; Get JWT
-      </button>
+      {isDevelopment && <>
+        <div className="divider" />
+        <div className="card-head"><h3>Development Demo Login</h3></div>
+        <div className="field-row">
+          <label className="field"><span>User</span><input value={username} onChange={(e) => setUsername(e.target.value)} /></label>
+          <label className="field"><span>Password</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+        </div>
+        <button className="btn btn-outline-blue btn-block" onClick={login}>
+          <LogIn size={14} /> Login &amp; Get JWT
+        </button>
+      </>}
       {token && claims ? (
         <div className="mini-stats">
           <span>{tokenExpired ? 'JWT expired:' : 'Authenticated:'} <b>{claims.sub}</b></span>
           <span className={tokenExpired ? 'c-red' : 'c-green'}>
             JWT {tokenExpired ? 'EXPIRED' : `valid until ${new Date(expiresAt).toLocaleTimeString()}`}
           </span>
-          <button className="btn btn-xs btn-outline-red" onClick={() => { setToken(null); notify('JWT cleared from memory', 'info'); }}>
+          {isDevelopment && <button className="btn btn-xs btn-outline-red" onClick={() => { setToken(null); notify('JWT cleared from memory', 'info'); }}>
             <LogOut size={11} /> Clear JWT
-          </button>
+          </button>}
         </div>
-      ) : (
-        <div className="muted tiny">{tokenExpired ? 'JWT expired - log in again' : 'admin / admin123'}</div>
-      )}
+      ) : isDevelopment && <div className="muted tiny">{tokenExpired ? 'JWT expired - log in again' : 'Use the local demo credentials configured for this installation.'}</div>}
     </section>
   );
 }

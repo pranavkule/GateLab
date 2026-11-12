@@ -10,6 +10,9 @@
  * Uses a separate MongoDB database (edgegate_test).
  */
 require('dotenv').config();
+process.env.JWT_SECRET = process.env.JWT_SECRET || require('crypto').randomBytes(48).toString('hex');
+process.env.DEMO_USER = 'edgegate-test-admin';
+process.env.DEMO_PASSWORD = 'test-only-password-for-jest';
 
 process.env.MONGO_URI = 'mongodb://127.0.0.1:27018/edgegate_test';
 process.env.REDIS_URL = 'redis://localhost:6380';

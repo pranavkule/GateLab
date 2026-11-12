@@ -12,6 +12,8 @@
     "dev:backend": "node backend/index.js",
     "dev:frontend": "npm run dev --prefix frontend",
     "seed": "node backend/scripts/seed.js",
+    "seed:data": "node backend/scripts/seedData.js",
+    "admin:provision": "node backend/scripts/provisionAdmin.js",
     "stop": "powershell -ExecutionPolicy Bypass -File scripts/stop.ps1",
     "test": "jest --runInBand --forceExit",
     "test:performance": "jest tests/performance.test.js --runInBand --forceExit --testTimeout=180000"
@@ -21,7 +23,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
-    "http-proxy": "^1.18.1",
     "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.9.5",

@@ -1,5 +1,14 @@
+require('dotenv').config();
+
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'edgegate-dev-secret-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (typeof JWT_SECRET !== 'string' || JWT_SECRET.trim().length === 0) {
+  throw new Error('JWT_SECRET is required; configure it in the local environment or production secret provider');
+}
+if (process.env.NODE_ENV === 'production' && Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
+  throw new Error('JWT_SECRET must be at least 32 bytes in production');
+}
 
 function signToken(payload, options) {
   return jwt.sign(payload, JWT_SECRET, options);

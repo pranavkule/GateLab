@@ -1,5 +1,9 @@
 // Seeds the initial routing configuration and demo user (idempotent).
 require('dotenv').config();
+if (process.env.NODE_ENV === 'production') {
+  console.error('Refusing to seed the development demo user in production.');
+  process.exit(1);
+}
 const { connectDb, disconnectDb } = require('../db');
 const manager = require('../config/manager');
 const { User } = require('../models');
@@ -13,7 +17,7 @@ const { User } = require('../models');
   const exists = await User.findOne({ username });
   if (!exists) {
     await User.create({ username, password, role: 'student' });
-    console.log(`Seeded demo user: ${username} / ${password}`);
+    console.log(`Seeded demo user: ${username}`);
   } else {
     console.log(`Demo user exists: ${username}`);
   }

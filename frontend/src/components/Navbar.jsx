@@ -2,8 +2,10 @@ import React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Activity, BookOpen, RotateCcw, Settings } from 'lucide-react';
 import { api } from '../services/api';
+import { useStore } from '../store/StoreContext';
 
 export default function Navbar({ onReset }) {
+  const { user, logout } = useStore();
   const navigate = useNavigate();
 
   async function resetLab() {
@@ -26,9 +28,11 @@ export default function Navbar({ onReset }) {
         </div>
       </div>
       <div className="navbar-links">
+        <Link to="/store">E-commerce Store</Link>
         <NavLink to="/" end>Virtual Lab</NavLink>
         <NavLink to="/configuration">Configuration</NavLink>
         <NavLink to="/guide">Guide</NavLink>
+        {user && <button className="btn btn-outline-light" onClick={() => { logout(); navigate('/store/login', { replace: true }); }}>Log out</button>}
         <button className="btn btn-outline-light" onClick={resetLab}>
           <RotateCcw size={14} /> Reset Lab
         </button>

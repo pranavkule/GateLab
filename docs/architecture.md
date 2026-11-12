@@ -36,12 +36,17 @@ not a crash — recovery is instant.
   60 s throughput/latency history (all real values).
 - **Active health checker**: polls every backend `/health` and gateway
   `/gateway-health`, caches latency + request counts, broadcasts on change.
+- REST monitoring and administrative operations require a signed, unexpired
+  administrator JWT. Socket.IO requires the same administrator JWT and an
+  allowed browser origin. `/health` returns only a minimal status; gateways
+  can read only `/api/config/latest` without a user token for startup bootstrap.
 
 ### 5. Auth service (`:5011`)
-Signs HS256 JWTs (`sub`, `role`, `iat`, `exp`) with a secret from environment
-variables. Provides login, demo token generation (valid/expired/invalid) and
-verification. The secret is shared only with the gateways (via env) and is never sent
-to the frontend.
+Signs HS256 JWTs (`sub`, `role`, `iat`, `exp`) with a required environment
+secret shared by Auth, Gateway, and Product Service processes. The secret has
+no source-code fallback and is never sent to the frontend. Customer
+registration/login remain available; demo login, demo token, and plaintext
+verification endpoints exist only outside production.
 
 ### 6. Configuration manager (control plane + Pub/Sub)
 `PUT /api/config` → **validate** (paths, targets, booleans, duplicates) → **persist**
@@ -70,6 +75,24 @@ startup (sync mechanism) and retry until the control plane is reachable.
 7. Response relays to the client with `x-gateway`, `x-service`, `x-instance` headers.
 8. Asynchronously: log record → Redis → control plane → MongoDB batch insert →
    Socket.IO → Request Logs table. Metrics counters update within 1 s.
+
+## Security boundaries
+
+- The gateway removes any client-supplied `x-auth-user` header before route
+  handling. On protected routes it derives a new identity header only after
+  verifying the JWT. User and Order Services trust that header only from the
+  co-located Gateway process.
+- Gateway and backend service listeners bind to loopback; MongoDB and Redis
+  Compose host ports bind to loopback as well. Production deployment must keep
+  service/database ports on private networks and expose only a reverse proxy.
+- Browser origins are restricted by `ALLOWED_ORIGINS`; development defaults
+  allow the local Vite origin. CORS is not authentication: all Control Plane
+  REST operations and Socket.IO sessions separately require an administrator
+  JWT.
+- The single-node MongoDB replica set remains unauthenticated by default for
+  local development. Production connection URLs must include credentials.
+  Adding credentials to an existing Mongo volume requires provisioning users
+  before enabling authenticated startup.
 
 ## Failure handling model
 

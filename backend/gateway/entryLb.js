@@ -14,6 +14,7 @@ const http = require('http');
 const { forward } = require('../proxy');
 const registry = require('../registry');
 const { CHANNELS, createSubscriber, createRedis } = require('../redis');
+const { getCorsHeaders } = require('../security/cors');
 
 async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
   const publisher = createRedis();
@@ -48,9 +49,13 @@ async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
   }, healthIntervalMs || Number(process.env.HEALTH_CHECK_INTERVAL) || 3000);
 
   const server = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    const corsHeaders = getCorsHeaders(req.headers.origin);
+    if (corsHeaders === null) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'origin_not_allowed' }));
+      return;
+    }
+    Object.entries(corsHeaders).forEach(([name, value]) => res.setHeader(name, value));
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     const started = Date.now();
     const healthy = registry.healthyGateways(gatewayPorts);

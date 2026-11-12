@@ -8,6 +8,7 @@ const { verifyToken } = require('../auth/jwt');
 
 function jwtAuthMiddleware(getRouteForPath) {
   return (req, res, next) => {
+    delete req.headers['x-auth-user'];
     const route = getRouteForPath(req.path);
     req.jwtStatus = 'none'; // public route, no JWT evaluated
     if (!route || !route.authRequired) return next();

@@ -18,10 +18,17 @@
  *   errors  -> returns 500 for ~30% of requests
  */
 const express = require('express');
+const usersApi = require('./usersApi');
+const productsApi = require('./productsApi');
+const ordersApi = require('./ordersApi');
+const { corsMiddleware } = require('../security/cors');
+
+// Service key -> application-layer business logic module.
+const serviceApis = { users: usersApi, products: productsApi, orders: ordersApi };
 
 function createServiceApp({ port, service }) {
   const app = express();
-  app.use(require('cors')());
+  app.use(corsMiddleware());
   app.use(express.json({ limit: '256kb' }));
 
   const sim = { down: false, latencyMs: 0, errorRate: 0 };
@@ -69,6 +76,26 @@ function createServiceApp({ port, service }) {
       return res.status(500).json({ error: 'simulated_error', service, instance: port, timestamp: new Date().toISOString() });
     }
 
+    // Application-layer business logic (per-service modules above): requests
+    // handled there are MongoDB-backed. Runs AFTER the simulation checks, so
+    // down/latency/error injection still applies to it. Returns false for
+    // unmatched paths, which keep the legacy demo behaviour below.
+    const api = serviceApis[service];
+    if (api) {
+      let handled = false;
+      try {
+        handled = await api.handle(req, res, port);
+      } catch (err) {
+        // A thrown error must never crash the worker process or hang the
+        // gateway proxy - always answer with a clean JSON error.
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'internal_error', message: 'Unexpected service error', service, instance: port });
+        }
+        return;
+      }
+      if (handled) return;
+    }
+
     // Data endpoints (GET / POST) - the actual proxied targets.
     if (req.method === 'POST') {
       return res.status(201).json({
@@ -110,6 +137,24 @@ function createServiceApp({ port, service }) {
 async function startServiceInstance({ port, service }) {
   const http = require('http');
   const { createSubscriber, createRedis, CHANNELS } = require('../redis');
+  const { connectDb, disconnectDb, mongoose } = require('../db');
+
+  // Services with MongoDB-backed business logic need their OWN database
+  // connection: cluster workers are separate processes and share nothing
+  // with the primary. Services without business logic keep running
+  // stateless (no connection, exactly as before).
+  const DB_SERVICES = new Set(['users', 'products', 'orders']);
+  let dbConnected = false;
+  if (DB_SERVICES.has(service) && mongoose.connection.readyState === 0) {
+    try {
+      await connectDb();
+      dbConnected = true;
+      console.log(`[svc:${service}:${port}] connected to MongoDB`);
+    } catch (e) {
+      console.error(`[svc:${service}:${port}] MongoDB connection failed: ${e.message}`);
+    }
+  }
+
   const app = createServiceApp({ port, service });
   const server = http.createServer(app);
 
@@ -133,12 +178,13 @@ async function startServiceInstance({ port, service }) {
     publisher.publish(CHANNELS.METRICS, JSON.stringify({ source: `${service}-${port}`, kind: 'backend', service, port, ...s, healthy: !s.down, ts: Date.now() }));
   }, 1000);
 
-  server.listen(port, () => console.log(`[svc:${service}] instance :${port} listening`));
+  server.listen(port, '127.0.0.1', () => console.log(`[svc:${service}] instance :${port} listening on 127.0.0.1`));
 
   async function close() {
     clearInterval(beat);
     await new Promise((r) => server.close(r));
     sub.quit(); publisher.quit();
+    if (dbConnected) { try { await disconnectDb(); } catch (_) {} }
   }
   return { server, close };
 }
