@@ -94,6 +94,23 @@ startup (sync mechanism) and retry until the control plane is reachable.
   Adding credentials to an existing Mongo volume requires provisioning users
   before enabling authenticated startup.
 
+## Production Docker packaging boundaries
+
+The project keeps its existing process architecture when running in Docker: the
+backend container hosts the same Node cluster as local development, and the
+frontend container serves the built app through Nginx. Public browser traffic is
+received only on port 80 and routed internally to the correct service:
+
+- `/:` static React app and SPA fallback
+- `/auth/*` -> Auth Service (`:5011`)
+- `/api/config*`, `/api/status`, `/api/logs`, `/api/reset`, `/api/backend/*`, `/api/gateway/*`, `/api/demo-token` -> Control Plane (`:5010`)
+- `/api/*` -> Entry Load Balancer (`:3010`) for storefront, catalog, orders, and profile traffic
+- `/socket.io/*` -> Control Plane Socket.IO (`:5010`)
+
+The browser therefore uses the same-origin URL in production and never calls the
+internal service ports directly. Docker Compose keeps MongoDB and Redis on the
+internal bridge network, with only the frontend service published to the host.
+
 ## Failure handling model
 
 | Failure | Detection | Client impact | Recovery |

@@ -1,0 +1,40 @@
+services:
+  mongodb:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--port", "27018", "--bind_ip_all"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+    ports:
+      - "127.0.0.1:27018:27018"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$MONGO_INITDB_ROOT_USERNAME" ] && [ -n "$$MONGO_INITDB_ROOT_PASSWORD" ]; then
+            mongosh --quiet --port 27018 --username "$$MONGO_INITDB_ROOT_USERNAME" --password "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval
+            "rs.status().ok";
+          else
+            mongosh --quiet --port 27018 --eval
+            "rs.status().ok";
+          fi
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
+    ports:
+      - "127.0.0.1:6380:6379"
+
+volumes:
+  mongo_data:

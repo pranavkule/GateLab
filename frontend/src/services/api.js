@@ -3,9 +3,19 @@
 // side by side on one machine (see frontend/.env).
 import { readSessionToken } from './session';
 
-const CP = `http://localhost:${import.meta.env.VITE_CONTROL_PLANE_PORT || 5010}`;   // control plane (REST + Socket.IO)
-const AUTH = `http://localhost:${import.meta.env.VITE_AUTH_PORT || 5011}`;          // authentication service
-const GATEWAY = `http://localhost:${import.meta.env.VITE_ENTRY_LB_PORT || 3010}`;   // entry-point load balancer
+function runtimeBaseUrl(port, envName) {
+  const configured = import.meta.env[envName];
+  if (configured) return configured.replace(/\/$/, '');
+  if (import.meta.env.DEV) return `http://localhost:${port}`;
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    return window.location.origin;
+  }
+  return `http://localhost:${port}`;
+}
+
+const CP = runtimeBaseUrl(5010, 'VITE_CONTROL_PLANE_URL');   // control plane (REST + Socket.IO)
+const AUTH = runtimeBaseUrl(5011, 'VITE_AUTH_URL');          // authentication service
+const GATEWAY = runtimeBaseUrl(3010, 'VITE_ENTRY_LB_URL');   // entry-point load balancer
 
 async function requestResult(base, path, { method = 'GET', body, token, headers = {} } = {}) {
   const requestHeaders = { Accept: 'application/json', ...headers };

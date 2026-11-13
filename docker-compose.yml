@@ -1,58 +1,81 @@
-# EdgeGate local infrastructure.
-#
-# MongoDB runs as a SINGLE-NODE REPLICA SET (rs0). That is the smallest change
-# that enables multi-document ACID transactions, which the Order Service
-# (P1.4) requires: all stock deductions + order creation commit atomically, so
-# a failed order never leaves partial inventory changes. A plain standalone
-# mongod CANNOT run transactions, so do not remove --replSet.
-#
-# The replica set self-initializes: the healthcheck runs rs.initiate() on the
-# first start if the set does not exist yet. This file is the local-development
-# setup; published database ports are loopback-only. Production credentials
-# can be supplied through the ignored local environment file. Do not enable
-# credentials against an existing unauthenticated mongo_data volume without
-# first provisioning the MongoDB users.
-#
-# NOTE for existing installations: if you created `mongo_data` while MongoDB
-# ran standalone, run `docker compose up -d` after this change - the healthcheck
-# will initiate the replica set automatically (data is preserved).
+# EdgeGate production packaging. MongoDB is hosted by MongoDB Atlas; Redis
+# remains private to this Docker network. Only the frontend publishes port 80.
 services:
-  mongodb:
-    image: mongo:7
-    command: ["mongod", "--replSet", "rs0", "--port", "27018", "--bind_ip_all"]
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:27018:27018"
-    volumes:
-      - mongo_data:/data/db
+      - "80:80"
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      NODE_ENV: production
+      CONTROL_PLANE_PORT: 5010
+      AUTH_PORT: 5011
+      ENTRY_LB_PORT: 3010
+      GATEWAY_PORTS: "3011,3012,3013"
+      BACKEND_INSTANCES: "4011:users,4014:users,4012:products,4015:products,4013:orders,4016:orders"
+      MONGO_URI: ${DOCKER_MONGO_URI:?DOCKER_MONGO_URI must be set to the authenticated MongoDB Atlas URI}
+      REDIS_URL: ${DOCKER_REDIS_URL:?DOCKER_REDIS_URL must be set to an authenticated URL using redis:6379}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set for Docker production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set for Docker production}
+      HEALTH_CHECK_INTERVAL: 3000
+      PROXY_TIMEOUT: 8000
+    depends_on:
+      redis:
+        condition: service_started
+    expose:
+      - "3010"
+      - "3011"
+      - "3012"
+      - "3013"
+      - "4011"
+      - "4012"
+      - "4013"
+      - "4014"
+      - "4015"
+      - "4016"
+      - "5010"
+      - "5011"
     healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          if [ -n "$$MONGO_INITDB_ROOT_USERNAME" ] && [ -n "$$MONGO_INITDB_ROOT_PASSWORD" ]; then
-            mongosh --quiet --port 27018 --username "$$MONGO_INITDB_ROOT_USERNAME" --password "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval
-            "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27018'}]}).ok }";
-          else
-            mongosh --quiet --port 27018 --eval
-            "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27018'}]}).ok }";
-          fi
-      interval: 5s
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3010/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1));\""]
+      interval: 30s
       timeout: 10s
-      retries: 30
-      start_period: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - appnet
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set for Docker production}
     command:
       - sh
       - -c
-      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
-    ports:
-      - "127.0.0.1:6380:6379"
+      - 'exec redis-server --requirepass "$${REDIS_PASSWORD}" --appendonly yes'
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - appnet
+    restart: unless-stopped
+
+networks:
+  appnet:
+    driver: bridge
 
 volumes:
-  mongo_data:
+  redis_data:

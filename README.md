@@ -56,8 +56,10 @@ observability â€” all with **real** HTTP traffic, real metrics and real per
 | 4011/4014 | | 4012/4015   | | 4013/4016 |
 +-----------+ +-------------+ +-----------+
 
-MongoDB (:27018)   -> routing config versions, audit history, request logs, users, products, orders
-Redis (:6380)      -> config Pub/Sub, async log/metric streaming
+MongoDB -> routing config versions, audit history, request logs, users, products, orders
+Redis    -> config Pub/Sub, async log/metric streaming
+Local development host ports: MongoDB 127.0.0.1:27018, Redis 127.0.0.1:6380
+Production: MongoDB Atlas gatelab.bvnyegl.mongodb.net (SRV), Redis redis:6379 (not host-published)
 Control plane (5010)-> REST API + Socket.IO live monitoring + health checker
 Auth service(5011) -> JWT login / token / verify
 ```
@@ -127,19 +129,23 @@ development seed accounts into a production database.
 
 Root `.env` and `frontend/.env` are local-only and ignored by Git. Start from
 `.env.example`, replace its placeholders locally, and use the same `JWT_SECRET`
-for Auth, Gateway, and Product Service processes. Production startup requires
-an explicit JWT secret, configured browser origins, and authenticated MongoDB
-and Redis connection URLs. The JWT key is never a frontend/Vite variable.
+for Auth, Gateway, and Product Service processes. Docker production uses a
+separate ignored `.env.production` file so local database URLs remain unchanged.
+Production startup requires an explicit JWT secret, configured browser origins,
+and authenticated MongoDB and Redis connection URLs. The JWT key is never a
+frontend/Vite variable.
 
 > **MongoDB transactions note:** the Order Service (P1.4) requires multi-document
-> ACID transactions, so `docker-compose.yml` runs MongoDB as a **single-node
-> replica set** (`rs0`, listening on `27018` inside the container and mapped 1:1
-> to the host). The replica set self-initializes via the container healthcheck on
-> the first `npm run db:up`. If you have an older `mongo_data` volume that was
-> created before this change, simply run `docker compose up -d` again - the
-> healthcheck initiates the replica set automatically and your data is preserved.
-> Verify with:
-> `docker exec sd_microproject-mongodb-1 mongosh --quiet --port 27018 --eval "rs.status().ok"` (should print `1`).
+> ACID transactions. Local development uses a **single-node replica set** (`rs0`)
+> in `docker-compose.dev.yml`, with MongoDB and Redis published only to loopback
+> ports `27018` and `6380`. Production uses MongoDB Atlas; its database is not
+> stored in a local Docker volume. The `mongo_data` volume belongs to local
+> development only and remains managed by `docker-compose.dev.yml`.
+> Replica-set health checks do not initialize or migrate a volume. For a fresh
+> local volume only, initialize it explicitly after `npm run db:up`:
+> `docker compose -f docker-compose.dev.yml exec mongodb mongosh --quiet --port 27018 --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27018'}]})"`.
+> For an existing volume, first inspect its state and follow the migration steps
+> below; do not run that initialization command against unknown data.
 
 ## Startup
 
@@ -198,6 +204,78 @@ npm run stop            # frees ports 3010-3013, 4011-4016, 5010, 5011, 5174 (an
 npm run db:down         # stops MongoDB + Redis containers
 ```
 
+## Production Docker packaging
+
+The repository now supports a production-style Docker Compose layout that keeps the
+existing application architecture intact while moving the public entry point behind
+Nginx. The frontend container serves the built React app on port 80; the backend
+container runs the existing Node cluster for the entry load balancer, gateways,
+internal services, auth service, and control plane. MongoDB is hosted by Atlas;
+Redis remains private to the Compose network and is not exposed on the host.
+
+```powershell
+# Create a separate production env file if it does not exist, then edit it
+# locally. Do not overwrite an existing .env or .env.production.
+if (-not (Test-Path .env.production)) { Copy-Item .env.example .env.production }
+notepad .env.production
+
+# Required variables in .env.production (see .env.example):
+# DOCKER_MONGO_URI, DOCKER_REDIS_URL, REDIS_PASSWORD, JWT_SECRET,
+# ALLOWED_ORIGINS
+
+docker compose --env-file .env.production config
+
+docker compose --env-file .env.production build
+
+docker compose --env-file .env.production up -d
+
+docker compose --env-file .env.production ps
+
+docker compose --env-file .env.production logs -f backend frontend
+```
+
+Configure Atlas before starting the application:
+
+1. Create a MongoDB Atlas database user with only the permissions the app needs
+   for the `edgegate` database. The Atlas account and database user are separate.
+2. Set `DOCKER_MONGO_URI` in the ignored `.env.production` to the Atlas SRV
+   connection string, with the supplied username/password URL-encoded:
+   `mongodb+srv://<url-encoded-user>:<url-encoded-password>@gatelab.bvnyegl.mongodb.net/edgegate?retryWrites=true&w=majority&appName=gatelab`.
+   Do not commit this URI or paste credentials into documentation or source.
+3. In Atlas **Network Access**, allow the deployment machine's outbound public IP
+   address. For EC2, use the instance's stable public egress IP (or NAT gateway
+   Elastic IP, if applicable). Avoid allowing `0.0.0.0/0`.
+4. Set `DOCKER_REDIS_URL`, `REDIS_PASSWORD`, `JWT_SECRET` (at least 32 bytes),
+   and `ALLOWED_ORIGINS` in `.env.production`. The Redis password in the URL
+   must match `REDIS_PASSWORD`.
+
+The production Compose file passes `DOCKER_MONGO_URI` to the backend as
+`MONGO_URI`; it no longer runs a MongoDB container or declares a production
+MongoDB volume. MongoDB root-init variables are not used in production. The
+Atlas cluster handles TLS and replica-set discovery through the `mongodb+srv`
+URI. Keep local-development `MONGO_URI` and `REDIS_URL` in `.env` separate;
+`docker-compose.dev.yml` and its local MongoDB volume remain unchanged.
+
+The browser should communicate through the Nginx origin (`http://localhost`) and
+must not hardcode `localhost:3010`, `localhost:5010`, or `localhost:5011` in the
+production frontend. Nginx routes customer storefront requests to the gateway,
+admin/control-plane actions to the control plane, and auth endpoints to the auth
+service. Socket.IO traffic uses the same origin and is proxied to the control-plane
+endpoint.
+
+Production Compose explicitly uses `DOCKER_MONGO_URI` and `DOCKER_REDIS_URL`,
+never the local `MONGO_URI` and `REDIS_URL`. MongoDB root credentials are only
+optional local-development settings. Use fresh Redis/JWT secrets and the actual
+browser origin; credentials embedded in connection URLs must be URL-encoded.
+Do not reuse any previously disclosed JWT secret or demo password.
+
+Local development continues to use `npm run db:up` and root `.env` values
+`MONGO_URI=mongodb://127.0.0.1:27018/edgegate` and
+`REDIS_URL=redis://localhost:6380`; it starts only the local database services
+from `docker-compose.dev.yml`. It does not initialize MongoDB automatically;
+for a fresh local volume, use the one-time initialization command in the
+MongoDB note above.
+
 ## Running two EdgeGate copies side by side
 
 This copy is configured to run **independently** of another EdgeGate instance on the
@@ -211,8 +289,8 @@ same machine (which owns the classic ports 3000-3003, 4001-4006, 5000, 5001, 517
 | Backend instances | :4011-4016 | :4001-4006 |
 | Control plane / Auth | :5010 / :5011 | :5000 / :5001 |
 | Frontend (Vite) | :5174 | :5173 |
-| MongoDB (Docker) | host 27018 -> container 27018 | host 27017 |
-| Redis (Docker) | host 6380 → container 6379 | host 6379 |
+| MongoDB (local dev) | host 27018 -> container 27018 | host 27017 |
+| Redis (local dev) | host 6380 -> container 6379 | host 6379 |
 
 Both copies need their own containers: this copy's compose uses container names
 `edgegate2-mongo` / `edgegate2-redis` and volume `edgegate2_mongo_data`, so
@@ -228,8 +306,8 @@ To run both: start the other project normally, then run this project's commands 
 | `CONTROL_PLANE_PORT` | 5010 | REST + Socket.IO |
 | `AUTH_PORT` | 5011 | Auth service |
 | `BACKEND_INSTANCES` | 4011:users,... | port:serviceKey list (2 per service) |
-| `MONGO_URI` | mongodb://127.0.0.1:27018/edgegate | MongoDB connection (host and container port 27018) |
-| `REDIS_URL` | redis://localhost:6380 | Redis connection, Pub/Sub only (host 6380 -> container 6379) |
+| `MONGO_URI` | mongodb://127.0.0.1:27018/edgegate | Local-development connection via the published host port; production uses Atlas through `DOCKER_MONGO_URI`. |
+| `REDIS_URL` | redis://localhost:6380 | Local-development connection via the published host port; production uses `redis:6379` internally. |
 | `JWT_SECRET` | dev value | JWT signing secret (server-only) |
 | `JWT_EXPIRES_IN` | 1h | Token lifetime |
 | `DEMO_USER` / `DEMO_PASSWORD` | admin / admin123 | Seeded demo login |
