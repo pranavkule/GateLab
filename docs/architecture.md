@@ -16,8 +16,9 @@ Each gateway is a fully independent Node process (spawned by `cluster` in
   on config updates — a request can never see a half-updated table),
 - its own metrics counters and its own round-robin cursors per service.
 
-Request pipeline: **CORS → JWT middleware → universal request logger → dynamic route
-match → healthy-instance selection → reverse proxy → response + async log publish**.
+Request pipeline: **CORS → JWT middleware → rate-limit middleware → universal request
+logger → dynamic route match → healthy-instance selection → reverse proxy → response +
+async log publish**.
 
 ### 3. Microservices (`:4011-4016`, two instances per service)
 Simple Express services (users/products/orders). Each exposes data endpoints,
@@ -59,7 +60,47 @@ startup (sync mechanism) and retry until the control plane is reachable.
 - **MongoDB**: versioned routing configs, audit history, request logs (indexed by
   timestamp), demo users.
 - **Redis**: pure Pub/Sub transport for config/log/metric/command/reset channels.
-  It is deliberately not used as a Mongo replacement.
+  It is deliberately not used as a Mongo replacement. The single exception is
+  the P2.4 rate-limit namespace (`edgegate:rl:*`), where Redis IS the data store
+  because shared mutable counters across gateway processes are the entire point.
+
+### 8. Rate limiting (P2.4, shared fixed window)
+- **Configuration**: every route optionally carries `rateLimit: { limit, windowMs }`
+  (`limit` positive integer, `windowMs` 1000-3600000 ms). Absent/null = unlimited,
+  so existing saved configurations and the default routes are unaffected. Limits
+  are edited on the Configuration page and flow through the SAME pipeline as
+  routing rules: validate → persist (version++) → audit → publish full snapshot
+  on `edgegate:config` → atomic in-memory replacement in every gateway.
+- **Enforcement**: a gateway middleware mounted after the JWT middleware and
+  before backend selection. Missing/invalid JWTs still get the existing `401`;
+  rate limiting then applies to requests that reached route handling, and
+  public routes are rate-limited by IP.
+- **Identity**: on authenticated routes the verified JWT subject (`req.user.sub`)
+  — never a client-supplied header; on public routes the trusted client IP.
+  The entry load balancer OVERWRITES `X-Forwarded-For` with the connecting
+  socket address (normalized: `::ffff:` and `::1` collapse to IPv4), so the
+  single-hop XFF value seen by the gateway cannot be forged by clients. Gateways
+  are loopback-only and never publicly reachable.
+- **Algorithm**: fixed window in Redis via one Lua round trip per limited
+  request: `INCR key` + `PEXPIRE key windowMs` when the counter is new + `PTTL`.
+  The key is `edgegate:rl:v<configVersion>:<routeId>:<identity>`, so all three
+  gateway instances share ONE budget per (version, route, client) and applying a
+  new configuration version starts everyone with a clean budget (stale windows
+  expire by TTL). `POST /api/reset` flushes the whole namespace.
+- **429 behavior**: over-limit requests are answered by the gateway itself with
+  `429 {"error":"rate_limited", retryAfterMs}` + `Retry-After` seconds (from the
+  window TTL) and `X-RateLimit-Limit/Remaining/Reset` headers. They are logged
+  (`rateLimited: true`, `backendInstance: none`), filterable in `/api/logs`
+  (`status=rate_limited` or `status=429`), and counted in a dedicated
+  `rateLimited` metric that flows into gateway snapshots, the entry-LB
+  snapshot, the control-plane overview and the System Overview card. A 429 is
+  never counted as success or as a 5xx failure.
+- **Fail-open trade-off**: if Redis is unavailable the middleware allows the
+  request and logs a throttled warning. This keeps the lab (and, in production,
+  the storefront) available during a Redis outage at the cost of temporarily
+  unenforced limits — a deliberate availability-over-strictness decision.
+  The Redis connection is persistent (one per gateway process), so there is no
+  per-request connection cost and the hot-path overhead is one local round trip.
 
 ## Complete request lifecycle (GET /api/users with JWT)
 
@@ -121,6 +162,7 @@ internal bridge network, with only the frontend service published to the host.
 | Upstream timeout | proxy timeout 8 s | `504` once, then instance excluded | instance health check |
 | Invalid route | routing table miss | `404` clean JSON | fix configuration |
 | Missing/invalid/expired JWT | JWT middleware | `401` with reason | login again |
+| Per-route rate limit exceeded | shared Redis counter (fixed window) | `429` + `Retry-After` header | wait for the window or Lab Reset |
 
 ## Design decisions worth remembering (viva points)
 

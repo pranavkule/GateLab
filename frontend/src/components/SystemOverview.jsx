@@ -1,12 +1,13 @@
 import React from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Activity, CheckCircle2, XCircle, ShieldAlert, Timer, Gauge } from 'lucide-react';
+import { Activity, CheckCircle2, XCircle, ShieldAlert, Timer, Gauge, TimerOff } from 'lucide-react';
 
 export default function SystemOverview({ overview, history, connected }) {
   const items = [
     { label: 'Total Requests', value: overview.totalRequests, icon: Activity, color: 'blue' },
     { label: 'Successful', value: overview.success, icon: CheckCircle2, color: 'green' },
     { label: 'Unauthorized', value: overview.unauthorized, icon: ShieldAlert, color: 'orange' },
+    { label: 'Rate Limited', value: overview.rateLimited ?? 0, icon: TimerOff, color: 'orange' },
     { label: 'Failed', value: overview.failed, icon: XCircle, color: 'red' },
     { label: 'Avg Latency', value: `${overview.avgLatency} ms`, icon: Timer, color: 'blue' },
     { label: 'Throughput', value: `${overview.throughputRps}/s`, icon: Gauge, color: 'blue' },

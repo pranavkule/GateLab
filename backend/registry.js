@@ -17,20 +17,21 @@ const state = {
   // Gateway health as known locally (used by the entry LB): { '3011': {healthy:true} }
   gateways: {},
   // Local metrics counters for this process.
-  metrics: { requests: 0, success: 0, failed: 0, unauthorized: 0, totalLatencyMs: 0 },
+  metrics: { requests: 0, success: 0, failed: 0, unauthorized: 0, rateLimited: 0, totalLatencyMs: 0 },
 };
 
-function trackRequest(latencyMs, status, jwtStatus) {
+function trackRequest(latencyMs, status, jwtStatus, rateLimited) {
   const m = state.metrics;
   m.requests += 1;
   m.totalLatencyMs += latencyMs;
   if (status >= 200 && status < 400) m.success += 1;
   if (status === 401) m.unauthorized += 1;
+  if (status === 429 || rateLimited) m.rateLimited += 1;
   if (status >= 500) m.failed += 1;
 }
 
 function resetMetrics() {
-  state.metrics = { requests: 0, success: 0, failed: 0, unauthorized: 0, totalLatencyMs: 0 };
+  state.metrics = { requests: 0, success: 0, failed: 0, unauthorized: 0, rateLimited: 0, totalLatencyMs: 0 };
 }
 
 function setBackendHealth(port, healthy) {

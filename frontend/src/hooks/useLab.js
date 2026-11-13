@@ -3,7 +3,7 @@ import { socket } from '../services/socket';
 import { api } from '../services/api';
 import { useStore } from '../store/StoreContext';
 
-const EMPTY_OVERVIEW = { totalRequests: 0, success: 0, unauthorized: 0, failed: 0, avgLatency: 0, throughputRps: 0 };
+const EMPTY_OVERVIEW = { totalRequests: 0, success: 0, unauthorized: 0, rateLimited: 0, failed: 0, avgLatency: 0, throughputRps: 0 };
 
 /**
  * Central live-lab state hook: REST bootstrap + Socket.IO streams.

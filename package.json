@@ -13,6 +13,7 @@
     "dev:frontend": "npm run dev --prefix frontend",
     "seed": "node backend/scripts/seed.js",
     "seed:data": "node backend/scripts/seedData.js",
+    "seed:catalog": "node backend/scripts/seedCatalog.js",
     "admin:provision": "node backend/scripts/provisionAdmin.js",
     "stop": "powershell -ExecutionPolicy Bypass -File scripts/stop.ps1",
     "test": "jest --runInBand --forceExit",

@@ -16,6 +16,7 @@ const express = require('express');
 const http = require('http');
 const { forward } = require('../proxy');
 const { jwtAuthMiddleware } = require('../middleware/jwtAuth');
+const { createRateLimitMiddleware } = require('../middleware/rateLimit');
 const { createRoundRobin } = require('../loadBalancer/roundRobin');
 const registry = require('../registry');
 const { CHANNELS, createSubscriber, createRedis } = require('../redis');
@@ -32,7 +33,7 @@ function matchRoute(routes, path) {
   return null;
 }
 
-function createGatewayApp({ name, publishFn }) {
+function createGatewayApp({ name, publishFn, rateLimitRedis }) {
   const gwState = { selfDown: false }; // simulated gateway failure flag
 
   const app = express();
@@ -41,7 +42,7 @@ function createGatewayApp({ name, publishFn }) {
   const rr = createRoundRobin();
 
   // Universal request logger: publishes exactly one log record per /api
-  // request when the response finishes (covers 401s, 404s and 503s that
+  // request when the response finishes (covers 401s, 404s, 429s and 503s that
   // short-circuit before the proxy). The proxy handler marks the record as
   // already published via res.locals.logged.
   app.use((req, res, next) => {
@@ -58,6 +59,7 @@ function createGatewayApp({ name, publishFn }) {
           backendInstance: res.locals.backendInstance || 'none',
           jwtStatus: req.jwtStatus || 'none',
           status: res.statusCode, latencyMs: Date.now() - started,
+          ...(res.locals.rateLimited ? { rateLimited: true } : {}),
         });
       });
     }
@@ -66,6 +68,18 @@ function createGatewayApp({ name, publishFn }) {
 
   // JWT middleware resolves the route from this process's local routing table.
   app.use(jwtAuthMiddleware((path) => matchRoute(registry.state.routes, path)));
+
+  // Shared fixed-window rate limiting (Redis counters across all gateways).
+  // Mounted after JWT: missing/invalid JWTs keep their existing 401, and
+  // authenticated identities are preferred over IPs. Routes without a
+  // rateLimit configuration pass straight through.
+  if (rateLimitRedis) {
+    app.use(createRateLimitMiddleware({
+      getRouteForPath: (path) => matchRoute(registry.state.routes, path),
+      redis: rateLimitRedis,
+      gatewayName: name,
+    }));
+  }
 
   // Self health - polled by the entry LB and the control plane.
   app.get('/gateway-health', (req, res) => {
@@ -150,8 +164,11 @@ function createGatewayApp({ name, publishFn }) {
 async function startGateway({ port, name, cpUrl }) {
   const publisher = createRedis();
   const sub = createSubscriber();
+  // Persistent dedicated connection for shared rate-limit counters: one per
+  // gateway process, never per request.
+  const rateLimitRedis = createRedis();
   const { createGatewayApp } = require('./gateway');
-  const { app, gwState } = createGatewayApp({ name, publishFn: (ch, msg) => publisher.publish(ch, msg) });
+  const { app, gwState } = createGatewayApp({ name, publishFn: (ch, msg) => publisher.publish(ch, msg), rateLimitRedis });
 
   const server = http.createServer(app);
 
@@ -203,6 +220,7 @@ async function startGateway({ port, name, cpUrl }) {
     publisher.publish(CHANNELS.METRICS, JSON.stringify({
       source: name, kind: 'gateway',
       requests: m.requests, success: m.success, failed: m.failed, unauthorized: m.unauthorized,
+      rateLimited: m.rateLimited,
       avgLatency: m.requests ? Math.round(m.totalLatencyMs / m.requests) : 0,
       rps, configVersion: registry.state.configVersion, healthy: !gwState.selfDown, ts: Date.now(),
     }));
@@ -214,7 +232,7 @@ async function startGateway({ port, name, cpUrl }) {
     clearInterval(metricsTimer);
     clearInterval(retry);
     await new Promise((r) => server.close(r));
-    sub.quit(); publisher.quit();
+    sub.quit(); publisher.quit(); rateLimitRedis.quit();
   }
   return { server, close };
 }

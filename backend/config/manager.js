@@ -10,6 +10,21 @@ const { CHANNELS, createRedis } = require('../redis');
 
 const VALID_TARGETS = ['users', 'products', 'orders'];
 
+// Optional per-route shared rate limit: { limit, windowMs } or null/absent.
+function validateRateLimit(rateLimit, path) {
+  if (rateLimit === undefined || rateLimit === null) return null;
+  if (typeof rateLimit !== 'object' || Array.isArray(rateLimit)) {
+    return `rateLimit must be an object or null for ${path}`;
+  }
+  if (!Number.isInteger(rateLimit.limit) || rateLimit.limit < 1) {
+    return `rateLimit.limit must be a positive integer for ${path}`;
+  }
+  if (!Number.isInteger(rateLimit.windowMs) || rateLimit.windowMs < 1000 || rateLimit.windowMs > 3600000) {
+    return `rateLimit.windowMs must be an integer between 1000 and 3600000 for ${path}`;
+  }
+  return null;
+}
+
 function validateRoutes(routes) {
   if (!Array.isArray(routes) || routes.length === 0) return 'Configuration must contain at least one route';
   const seenPaths = new Set();
@@ -17,6 +32,8 @@ function validateRoutes(routes) {
     if (!r.path || typeof r.path !== 'string' || !r.path.startsWith('/')) return `Invalid path: ${JSON.stringify(r.path)}`;
     if (!VALID_TARGETS.includes(r.targetService)) return `Invalid target service: ${r.targetService} (allowed: ${VALID_TARGETS.join(', ')})`;
     if (typeof r.authRequired !== 'boolean') return `authRequired must be true/false for ${r.path}`;
+    const rateLimitError = validateRateLimit(r.rateLimit, r.path);
+    if (rateLimitError) return rateLimitError;
     if (seenPaths.has(r.path)) return `Duplicate path: ${r.path}`;
     seenPaths.add(r.path);
   }
@@ -64,4 +81,4 @@ async function applyRoutes(routes, changedBy = 'admin') {
   return payload;
 }
 
-module.exports = { validateRoutes, getLatest, seedIfEmpty, applyRoutes, VALID_TARGETS };
+module.exports = { validateRoutes, validateRateLimit, getLatest, seedIfEmpty, applyRoutes, VALID_TARGETS };

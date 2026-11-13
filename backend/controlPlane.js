@@ -17,6 +17,7 @@ const { SERVICE_META, backendInstances } = require('./config');
 const { startHealthChecker } = require('./health/checker');
 const { signToken, verifyToken } = require('./auth/jwt');
 const { corsMiddleware, getAllowedOrigins, isAllowedOrigin } = require('./security/cors');
+const { clearRateLimitKeys } = require('./middleware/rateLimit');
 const registry = require('./registry');
 
 function createControlPlane({ port }) {
@@ -103,6 +104,7 @@ function createControlPlane({ port }) {
       totalRequests: entry.requests || 0,
       success: entry.success || 0,
       unauthorized: entry.unauthorized || 0,
+      rateLimited: entry.rateLimited || 0,
       failed: entry.failed || 0,
       avgLatency: entry.avgLatency || 0,
       throughputRps: entry.rps || 0,
@@ -226,6 +228,7 @@ function createControlPlane({ port }) {
       }
       if (status === 'success') q.status = { $lt: 400 };
       else if (status === 'unauthorized') q.status = 401;
+      else if (status === 'rate_limited') q.rateLimited = true;
       else if (status === 'failed') q.status = { $gte: 500 };
       else if (status) q.status = Number(status);
       const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
@@ -249,11 +252,14 @@ function createControlPlane({ port }) {
   app.post('/api/reset', async (req, res, next) => {
     try {
       await publishCmd(CHANNELS.RESET, { ts: Date.now() });
+      // Also clear the shared rate-limit windows so exhausted routes can be
+      // demonstrated again immediately (never touches configuration history).
+      const clearedKeys = await clearRateLimitKeys(publisher).catch(() => 0);
       await RequestLog.deleteMany({});
       metricSources.clear();
       history.length = 0;
       io.emit('logs-cleared');
-      res.json({ ok: true, message: 'Lab counters and request logs cleared (configuration history preserved)' });
+      res.json({ ok: true, message: `Lab counters, request logs and ${clearedKeys} rate-limit window(s) cleared (configuration history preserved)` });
     } catch (e) { next(e); }
   });
 

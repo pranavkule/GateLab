@@ -35,6 +35,10 @@ const CONCEPTS = [
     body: 'Durable storage: every version of the routing configuration, the audit history of who changed what, every processed request log, and the demo user accounts. The request path never blocks on MongoDB - gateways stream logs to the control plane over Redis, which batches inserts once per second.',
   },
   {
+    title: 'What is Rate Limiting?',
+    body: 'Protecting a service by capping how many requests one client may send within a time window. EdgeGate limits are configured per route (requests / window seconds) and enforced by the gateways before any backend work happens. Counters live in Redis, so all three gateway instances enforce the SAME shared budget. Over the limit the client receives HTTP 429 with a Retry-After header, and the request never reaches the microservices.',
+  },
+  {
     title: 'How does the complete request lifecycle work?',
     body: '1) You send GET /api/users from the Traffic Generator to :3010. 2) The entry LB picks a healthy gateway. 3) The gateway matches the path against its in-memory routing table. 4) The JWT middleware validates the token if the route requires auth. 5) Round-robin picks a healthy backend instance. 6) The reverse proxy forwards method, path, headers and body. 7) The backend responds; the proxy relays it. 8) Metrics and a request log record are produced asynchronously (Redis -> control plane -> MongoDB -> your browser over Socket.IO).',
   },
@@ -50,6 +54,7 @@ const DEMO_STEPS = [
   'Backend failure: Quick Scenario 6 (or the Fail button on a Product Service instance) - all traffic moves to the other instance.',
   'Gateway failure: "Simulate Failure" on Gateway 2 - the entry LB routes only to Gateways 1 and 3.',
   'Recovery: "Recover" the failed instances - they rejoin the round-robin after the next health check.',
+  'Rate limiting: Quick Scenario 7 applies 5 requests / 15 s to /api/products, bursts 10 real requests - watch ~5 succeed then 429s with Retry-After (check Request Logs for the 429 rows). Configuration restores automatically.',
   'Monitoring: review the System Overview chart and the Request Logs table; everything you saw was measured, never faked.',
 ];
 

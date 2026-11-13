@@ -13,6 +13,12 @@ const RouteConfigSchema = new mongoose.Schema(
         targetService: { type: String, required: true }, // users | products | orders
         authRequired: { type: Boolean, default: true },
         enabled: { type: Boolean, default: true },
+        // Optional shared fixed-window rate limit. Absent/null = unlimited.
+        rateLimit: {
+          _id: false,
+          limit: { type: Number, min: 1 },
+          windowMs: { type: Number, min: 1000, max: 3600000 },
+        },
       },
     ],
     appliedAt: { type: Date, default: Date.now },
@@ -46,6 +52,7 @@ const RequestLogSchema = new mongoose.Schema(
     status: Number,
     latencyMs: Number,
     error: String,
+    rateLimited: { type: Boolean, default: false }, // true when the gateway answered 429 (P2.4)
   }
 );
 RequestLogSchema.index({ timestamp: -1 });

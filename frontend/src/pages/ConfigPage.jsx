@@ -7,7 +7,12 @@ import { ENTRY_LB_PORT, GATEWAY_PORTS, BACKEND_INSTANCES } from '../services/por
 const TARGETS = ['users', 'products', 'orders'];
 
 function emptyRule() {
-  return { id: `r-${Date.now()}`, path: '/api/', targetService: 'users', authRequired: false, enabled: true };
+  return { id: `r-${Date.now()}`, path: '/api/', targetService: 'users', authRequired: false, enabled: true, rateLimit: null };
+}
+
+function rateLimitLabel(rateLimit) {
+  if (!rateLimit || !(rateLimit.limit > 0)) return 'Unlimited';
+  return `${rateLimit.limit} / ${Math.max(1, Math.round((rateLimit.windowMs || 15000) / 1000))}s`;
 }
 
 export default function ConfigPage() {
@@ -42,7 +47,16 @@ export default function ConfigPage() {
     setDraft(rule);
   }
 
-  function startEdit(rule) { setEditing(rule.id); setDraft({ ...rule }); }
+  function startEdit(rule) {
+    // Draft carries rate-limit fields as editable strings; normalized on save.
+    const rl = rule.rateLimit || {};
+    setEditing(rule.id);
+    setDraft({
+      ...rule,
+      _rlLimit: rl.limit != null ? String(rl.limit) : '',
+      _rlWindow: rl.windowMs != null ? String(Math.round(rl.windowMs / 1000)) : '15',
+    });
+  }
   function cancelEdit(id) {
     setEditing(null);
     if (draft && !config.find((r) => r.id === draft.id && r === draft)) {
@@ -52,7 +66,17 @@ export default function ConfigPage() {
     setDraft(null);
   }
   function saveEdit() {
-    setConfig((rs) => rs.map((r) => (r.id === draft.id ? draft : r)));
+    // Normalize the rate-limit draft: a positive integer limit + window in
+    // seconds becomes { limit, windowMs }; an empty limit means unlimited.
+    const limit = parseInt(draft._rlLimit, 10);
+    const windowSec = parseInt(draft._rlWindow, 10);
+    const rateLimit = Number.isFinite(limit) && limit >= 1
+      ? { limit, windowMs: (Number.isFinite(windowSec) && windowSec >= 1 ? windowSec : 15) * 1000 }
+      : null;
+    const rule = { ...draft, rateLimit };
+    delete rule._rlLimit;
+    delete rule._rlWindow;
+    setConfig((rs) => rs.map((r) => (r.id === draft.id ? rule : r)));
     setEditing(null);
     setDraft(null);
   }
@@ -86,7 +110,7 @@ export default function ConfigPage() {
         <div className="table-wrap">
           <table className="log-table">
             <thead>
-              <tr><th>Path</th><th>Target Service</th><th>Auth Required</th><th>Enabled</th><th></th></tr>
+              <tr><th>Path</th><th>Target Service</th><th>Auth Required</th><th>Rate Limit</th><th>Enabled</th><th></th></tr>
             </thead>
             <tbody>
               {(config || []).map((r) => (
@@ -106,6 +130,20 @@ export default function ConfigPage() {
                         </select>
                       </td>
                       <td>
+                        <div className="field-row" style={{ gap: 4 }}>
+                          <input
+                            className="inline-input" style={{ width: 64 }} type="number" min="1" placeholder="∞"
+                            title="Limit: positive integer, empty = unlimited"
+                            value={draft._rlLimit} onChange={(e) => setDraft({ ...draft, _rlLimit: e.target.value })}
+                          />
+                          <input
+                            className="inline-input" style={{ width: 64 }} type="number" min="1"
+                            title="Window in seconds (1000-3600000 ms)"
+                            value={draft._rlWindow} onChange={(e) => setDraft({ ...draft, _rlWindow: e.target.value })}
+                          />
+                        </div>
+                      </td>
+                      <td>
                         <select className="inline-input" value={draft.enabled === false ? 'no' : 'yes'} onChange={(e) => setDraft({ ...draft, enabled: e.target.value === 'yes' })}>
                           <option value="yes">Yes</option>
                           <option value="no">No</option>
@@ -121,6 +159,7 @@ export default function ConfigPage() {
                       <td className="mono">{r.path}</td>
                       <td>{r.targetService}</td>
                       <td><span className={`badge ${r.authRequired ? 'badge-orange' : 'badge-gray'}`}>{r.authRequired ? 'Yes' : 'No'}</span></td>
+                      <td><span className={`badge ${r.rateLimit && r.rateLimit.limit > 0 ? 'badge-blue' : 'badge-gray'}`}>{rateLimitLabel(r.rateLimit)}</span></td>
                       <td><span className={`badge ${r.enabled === false ? 'badge-red' : 'badge-green'}`}>{r.enabled === false ? 'Disabled' : 'Enabled'}</span></td>
                       <td className="row-actions">
                         <button className="btn btn-sm" onClick={() => startEdit(r)}><Pencil size={13} /> Edit</button>
@@ -137,7 +176,7 @@ export default function ConfigPage() {
         <div className="config-actions">
           <button className="btn btn-outline-blue" onClick={addRule}><Plus size={14} /> Add Rule</button>
           <button className="btn btn-primary" onClick={apply}><Save size={14} /> Apply Configuration</button>
-          <span className="muted tiny">Apply validates, persists to MongoDB (version++), and syncs all 3 gateways live via Redis Pub/Sub - no restart.</span>
+          <span className="muted tiny">Apply validates, persists to MongoDB (version++), and syncs all 3 gateways live via Redis Pub/Sub - no restart. Rate limit = max requests / window seconds; empty limit = unlimited (shared Redis counter across all gateways).</span>
         </div>
       </section>
 

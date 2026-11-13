@@ -129,6 +129,9 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
         notify(`User Service instance :${first} is now OFFLINE - watch the LB route to :${second}. Recover it from the service card.`, 'warn');
         break;
       }
+      case 'rate-limit':
+        onScenario('rate-limit');
+        break;
       default:
         break;
     }
@@ -210,6 +213,7 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
         {isDevelopment && <button className="btn btn-scenario" onClick={() => scenario('expired-jwt')}>4. Expired JWT Request</button>}
         <button className="btn btn-scenario" onClick={() => scenario('route-change')}>5. Dynamic Route Change</button>
         <button className="btn btn-scenario" onClick={() => scenario('backend-failure')}>6. Backend Failure</button>
+        <button className="btn btn-scenario" onClick={() => scenario('rate-limit')}>7. Rate Limiting</button>
       </div>
 
       {isDevelopment && <>

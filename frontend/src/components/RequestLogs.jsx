@@ -4,7 +4,7 @@ import { api } from '../services/api';
 import { socket } from '../services/socket';
 
 function statusClass(status) {
-  if (status === 401) return 'badge-orange';
+  if (status === 401 || status === 429) return 'badge-orange';
   if (status >= 500 || status === 0) return 'badge-red';
   return 'badge-green';
 }
@@ -66,6 +66,7 @@ export default function RequestLogs({ newLogs, notify }) {
             <option value="all">All statuses</option>
             <option value="success">2xx Success</option>
             <option value="unauthorized">401 Unauthorized</option>
+            <option value="rate_limited">429 Rate-limited</option>
             <option value="failed">5xx Failed</option>
           </select>
           <button className="btn btn-sm btn-outline-red" onClick={clearAll}><Trash2 size={13} /> Clear</button>
@@ -92,7 +93,7 @@ export default function RequestLogs({ newLogs, notify }) {
                 <td>{r.backendService}</td>
                 <td className="mono">{r.backendInstance}</td>
                 <td><span className={`badge ${r.jwtStatus === 'valid' ? 'badge-green' : r.jwtStatus === 'none' ? 'badge-gray' : 'badge-orange'}`}>{r.jwtStatus}</span></td>
-                <td><span className={`badge ${statusClass(r.status)}`}>{r.status}</span></td>
+                <td><span className={`badge ${statusClass(r.status)}`}>{r.status}</span>{r.rateLimited && <span className="badge badge-orange" style={{ marginLeft: 4 }}>RL</span>}</td>
                 <td className="mono">{r.latencyMs} ms</td>
               </tr>
             ))}

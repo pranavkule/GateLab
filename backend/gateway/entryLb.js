@@ -15,6 +15,7 @@ const { forward } = require('../proxy');
 const registry = require('../registry');
 const { CHANNELS, createSubscriber, createRedis } = require('../redis');
 const { getCorsHeaders } = require('../security/cors');
+const { normalizeClientIp } = require('../middleware/rateLimit');
 
 async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
   const publisher = createRedis();
@@ -68,10 +69,14 @@ async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
 
     const target = rr.next('gateways', healthy);
     distribution[target] = (distribution[target] || 0) + 1;
+    // Trusted client IP for the gateway rate limiter: OVERWRITE (never append
+    // to) X-Forwarded-For so clients cannot forge identity headers. Direct
+    // gateway clients are loopback-only and not publicly reachable.
+    req.headers['x-forwarded-for'] = normalizeClientIp(req.socket.remoteAddress);
     try {
       await forward(req, res, `http://127.0.0.1:${target}`, 10000);
       const latency = Date.now() - started;
-      registry.trackRequest(latency, res.statusCode, 'none');
+      registry.trackRequest(latency, res.statusCode, 'none', res.statusCode === 429);
       if (res.statusCode >= 502 && res.statusCode !== 503) registry.markGatewayFailure(target);
       if (res.statusCode === 503) {
         // Could be a simulated gateway failure or an all-backends-down case;
@@ -96,6 +101,7 @@ async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
     publisher.publish(CHANNELS.METRICS, JSON.stringify({
       source: 'entry-lb', kind: 'entrylb',
       requests: m.requests, success: m.success, failed: m.failed, unauthorized: m.unauthorized,
+      rateLimited: m.rateLimited,
       avgLatency: m.requests ? Math.round(m.totalLatencyMs / m.requests) : 0,
       rps, distribution, healthyGateways: registry.healthyGateways(gatewayPorts), ts: Date.now(),
     }));

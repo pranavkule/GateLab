@@ -91,7 +91,7 @@ backend/
   auth/                 JWT helpers + auth service (:5011)
   security/             shared HTTP CORS policy
   gateway/              gateway instance, entry load balancer
-  middleware/           JWT verification middleware
+  middleware/           JWT verification + Redis-backed rate-limit middleware
   proxy/                reverse proxy implementation
   loadBalancer/         round-robin selector (one cursor per service)
   services/             microservice instance factory (6 instances)
@@ -106,7 +106,7 @@ frontend/
   src/services/         REST client, Socket.IO client
   src/hooks/useLab.js   live state hook (REST bootstrap + Socket.IO streams)
   src/styles/lab.css
-tests/                  Jest + Supertest + autocannon (7 suites, 75 tests)
+tests/                  Jest + Supertest + autocannon (8 suites)
 scripts/stop.ps1        frees all lab ports
 docker-compose.yml      mongo:7 + redis:7
 ```
@@ -118,6 +118,7 @@ npm run install:all     # installs root + frontend dependencies
 npm run db:up           # starts MongoDB (single-node replica set) + Redis via Docker Compose
 npm run seed            # seeds routing config v1 + demo user (idempotent)
 npm run seed:data       # seeds e-commerce data: user profiles, products, sample orders (idempotent)
+npm run seed:catalog    # production-only: inserts missing catalog products only
 npm run admin:provision # interactively provisions the first administrator
 ```
 
@@ -126,6 +127,12 @@ npm run admin:provision # interactively provisions the first administrator
 identity details and accepts the password without echoing it; it refuses to
 promote an existing customer or create another administrator. Do not copy
 development seed accounts into a production database.
+
+`seed:catalog` is a separate, production-only command. It inserts the original
+eight catalog products into the database selected by `MONGO_URI`; it does not
+seed users, administrators, or orders. Existing products are matched by unique
+name and left unchanged (including price, stock, and status). Do not use
+`seed:data` in production.
 
 Root `.env` and `frontend/.env` are local-only and ignored by Git. Start from
 `.env.example`, replace its placeholders locally, and use the same `JWT_SECRET`
@@ -193,9 +200,12 @@ operation.
 
 The Virtual Lab and Configuration dashboard require administrator JWTs for
 monitoring, configuration, logs, reset, fault injection, and Socket.IO updates.
-The development demo login and demo-token endpoints are disabled in production.
-Gateways may read the current routing snapshot during startup; the public
-`/health` endpoint returns only a minimal readiness status.
+Per-route rate limits are configured on the Configuration page and enforced by
+the gateways with shared Redis counters (see "Rate limiting demonstration" and
+`docs/architecture.md`). The development demo login and demo-token endpoints
+are disabled in production. Gateways may read the current routing snapshot
+during startup; the public `/health` endpoint returns only a minimal readiness
+status.
 
 Stop everything (including the dev processes started outside the terminal):
 
@@ -233,6 +243,21 @@ docker compose --env-file .env.production ps
 
 docker compose --env-file .env.production logs -f backend frontend
 ```
+
+After deploying the updated backend image, seed the Atlas catalog explicitly
+from the running backend container:
+
+```powershell
+docker compose --env-file .env.production exec backend npm run seed:catalog
+```
+
+The command uses the container's existing production `MONGO_URI` (mapped from
+`DOCKER_MONGO_URI`) and requires no credentials on the command line. It can be
+rerun safely: only missing product names are inserted. Verify the reported
+created/already-present counts, then request `GET /api/products` through the
+production site and confirm the expected active products are returned. The
+included Desk Mat entry is intentionally discontinued and should not appear in
+the public catalog.
 
 Configure Atlas before starting the application:
 
@@ -479,10 +504,27 @@ rewrite order history.
 4. If ALL instances of a service are down the gateway returns `503 Service Unavailable`.
 5. Failure states are real: the instance refuses traffic (`503`), health checks report it down, LB excludes it, logs record it.
 
+## Rate limiting demonstration (P2.4)
+
+1. **Quick Scenario 7 — Rate Limiting** in the Traffic Generator: applies a strict
+   temporary limit of 5 requests / 15 s to `/api/products/*`, sends 10 rapid real
+   requests through the entry load balancer, and reports every HTTP status
+   (about 5 × `200`, then `429` with a `Retry-After` header). The original
+   configuration is restored automatically, even if the burst fails.
+2. Manual configuration: Configuration page → edit a route's **Rate Limit**
+   (`limit / window-seconds`; empty = unlimited) → Apply. The version bump also
+   gives every client a fresh budget (counters are scoped by config version).
+3. Over-limit requests never reach the backends: they get `429 rate_limited`
+   with `Retry-After` seconds, appear in Request Logs (badge + "429 Rate-limited"
+   filter) and increment the **Rate Limited** card in System Overview.
+4. Counters are SHARED in Redis across all three gateway instances, and Lab
+   **Reset Counts** also clears every rate-limit window.
+
 ## MongoDB & Redis usage
 
 - **MongoDB**: `routeconfigs` (versioned routing tables), `configaudits` (who changed what when), `requestlogs` (every processed request, batch-inserted), `users` (demo login).
 - **Redis Pub/Sub channels**: `edgegate:config` (routing updates), `edgegate:logs` (async log stream), `edgegate:metrics` (1 s metric snapshots), `edgegate:backend-cmd` / `edgegate:gateway-cmd` (failure commands), `edgegate:reset`.
+- **Redis data keys**: `edgegate:rl:v<version>:<route>:<client>` — shared fixed-window rate-limit counters (Lua INCR/PEXPIRE/PTTL), the only data Redis holds; everything else stays Pub/Sub.
 - Routing state is never kept only in the browser; gateways each own an in-memory copy kept in sync over Pub/Sub and replaced atomically.
 
 ## Automated testing
@@ -496,7 +538,8 @@ npm run build --prefix frontend
 
 The tests boot a dedicated mini-stack on ports 14001-14102/15000-15001 with a separate
 `edgegate_test` database, so they never collide with the running dev stack.
-The latest verification run passed **7 suites and 75 tests**. The performance
+The latest verification run passed **8 suites** including the P2.4 rate-limiting
+suite. The performance
 case in that run completed 358 requests at 119 requests/second, with 83 ms
 average latency and zero errors; these measurements vary by machine and load.
 
