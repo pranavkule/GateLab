@@ -26,7 +26,7 @@ const { corsMiddleware } = require('../security/cors');
 // Service key -> application-layer business logic module.
 const serviceApis = { users: usersApi, products: productsApi, orders: ordersApi };
 
-function createServiceApp({ port, service }) {
+function createServiceApp({ port, service, isReady = () => true }) {
   const app = express();
   app.use(corsMiddleware());
   app.use(express.json({ limit: '256kb' }));
@@ -50,8 +50,11 @@ function createServiceApp({ port, service }) {
     // never counted in metrics and never subject to the error simulation,
     // so the active health checker always sees the instance's REAL state.
     if (req.path === '/health') {
-      if (sim.down) {
-        return res.status(503).json({ error: 'service_unavailable', message: `${service} instance :${port} is simulated offline`, service, instance: port, timestamp: new Date().toISOString() });
+      if (sim.down || !isReady()) {
+        const message = sim.down
+          ? `${service} instance :${port} is simulated offline`
+          : `${service} instance :${port} is not ready`;
+        return res.status(503).json({ error: 'service_unavailable', message, service, instance: port, timestamp: new Date().toISOString() });
       }
       return res.json({ status: 'up', service, instance: port, requestCount: metrics.requests, timestamp: new Date().toISOString() });
     }
@@ -145,17 +148,22 @@ async function startServiceInstance({ port, service }) {
   // stateless (no connection, exactly as before).
   const DB_SERVICES = new Set(['users', 'products', 'orders']);
   let dbConnected = false;
-  if (DB_SERVICES.has(service) && mongoose.connection.readyState === 0) {
+  if (DB_SERVICES.has(service)) {
     try {
-      await connectDb();
+      if (mongoose.connection.readyState !== 1) await connectDb();
       dbConnected = true;
       console.log(`[svc:${service}:${port}] connected to MongoDB`);
     } catch (e) {
       console.error(`[svc:${service}:${port}] MongoDB connection failed: ${e.message}`);
+      throw e;
     }
   }
 
-  const app = createServiceApp({ port, service });
+  const app = createServiceApp({
+    port,
+    service,
+    isReady: () => !DB_SERVICES.has(service) || mongoose.connection.readyState === 1,
+  });
   const server = http.createServer(app);
 
   const sub = createSubscriber();
@@ -183,8 +191,8 @@ async function startServiceInstance({ port, service }) {
   async function close() {
     clearInterval(beat);
     await new Promise((r) => server.close(r));
-    sub.quit(); publisher.quit();
-    if (dbConnected) { try { await disconnectDb(); } catch (_) {} }
+    await Promise.all([sub.quit(), publisher.quit()]);
+    if (dbConnected) await disconnectDb();
   }
   return { server, close };
 }

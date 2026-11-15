@@ -1,13 +1,20 @@
 import React from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { Activity, CheckCircle2, XCircle, ShieldAlert, Timer, Gauge, TimerOff } from 'lucide-react';
+import { Activity, CheckCircle2, XCircle, ShieldAlert, Timer, Gauge, TimerOff, ZapOff } from 'lucide-react';
 
-export default function SystemOverview({ overview, history, connected }) {
+export default function SystemOverview({ overview, history, connected, circuits }) {
+  const circuitValues = Object.values(circuits || {});
+  // P2.5.2: live circuit metrics in the overview - instances currently
+  // blocked (OPEN) or on probation (HALF-OPEN) by the shared Redis breaker.
+  const circuitsBlocked = circuitValues.filter((c) => c.state === 'open').length;
+  const circuitsProbing = circuitValues.filter((c) => c.state === 'half-open').length;
+  const circuitLabel = circuitsProbing > 0 ? `${circuitsBlocked} + ${circuitsProbing} probing` : circuitsBlocked;
   const items = [
     { label: 'Total Requests', value: overview.totalRequests, icon: Activity, color: 'blue' },
     { label: 'Successful', value: overview.success, icon: CheckCircle2, color: 'green' },
     { label: 'Unauthorized', value: overview.unauthorized, icon: ShieldAlert, color: 'orange' },
     { label: 'Rate Limited', value: overview.rateLimited ?? 0, icon: TimerOff, color: 'orange' },
+    { label: 'Circuits Open', value: circuitLabel, icon: ZapOff, color: circuitsBlocked > 0 ? 'red' : 'blue' },
     { label: 'Failed', value: overview.failed, icon: XCircle, color: 'red' },
     { label: 'Avg Latency', value: `${overview.avgLatency} ms`, icon: Timer, color: 'blue' },
     { label: 'Throughput', value: `${overview.throughputRps}/s`, icon: Gauge, color: 'blue' },

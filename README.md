@@ -59,7 +59,7 @@ observability â€” all with **real** HTTP traffic, real metrics and real per
 MongoDB -> routing config versions, audit history, request logs, users, products, orders
 Redis    -> config Pub/Sub, async log/metric streaming
 Local development host ports: MongoDB 127.0.0.1:27018, Redis 127.0.0.1:6380
-Production: MongoDB Atlas gatelab.bvnyegl.mongodb.net (SRV), Redis redis:6379 (not host-published)
+Production: MongoDB Atlas <your-cluster-host>.mongodb.net (SRV), Redis redis:6379 (not host-published)
 Control plane (5010)-> REST API + Socket.IO live monitoring + health checker
 Auth service(5011) -> JWT login / token / verify
 ```
@@ -265,7 +265,7 @@ Configure Atlas before starting the application:
    for the `edgegate` database. The Atlas account and database user are separate.
 2. Set `DOCKER_MONGO_URI` in the ignored `.env.production` to the Atlas SRV
    connection string, with the supplied username/password URL-encoded:
-   `mongodb+srv://<url-encoded-user>:<url-encoded-password>@gatelab.bvnyegl.mongodb.net/edgegate?retryWrites=true&w=majority&appName=gatelab`.
+   `mongodb+srv://<url-encoded-user>:<url-encoded-password>@<your-cluster-host>.mongodb.net/edgegate?retryWrites=true&w=majority&appName=gatelab`.
    Do not commit this URI or paste credentials into documentation or source.
 3. In Atlas **Network Access**, allow the deployment machine's outbound public IP
    address. For EC2, use the instance's stable public egress IP (or NAT gateway
@@ -520,28 +520,54 @@ rewrite order history.
 4. Counters are SHARED in Redis across all three gateway instances, and Lab
    **Reset Counts** also clears every rate-limit window.
 
+## Circuit breaker demonstration (P2.5.1/P2.5.2)
+
+Every backend instance has its own circuit breaker in shared Redis
+(`edgegate:cb:<port>`): CLOSED (normal traffic, consecutive failures counted) →
+OPEN after `CB_FAILURE_THRESHOLD` consecutive failures (default 5; upstream 5xx,
+unreachable, timeout) → HALF-OPEN after the `CB_COOLDOWN_MS` cooldown (default
+10 s), which admits only `CB_HALF_OPEN_PROBES` probe requests → a successful
+probe closes the circuit again, a failed probe reopens it. All transitions are
+atomic Lua scripts, so concurrent gateways never exceed the probe limit. Health
+checks never open or close circuits; a manual **Recover** resets them.
+
+1. **Quick Scenario 8 — Circuit Breaker** in the Traffic Generator: injects 100%
+   errors on both Product Service instances, bursts 14 real requests through the
+   entry LB (the upstream 500s open both circuits), observes the blocked window
+   (`503 circuit_open` + `Retry-After`), clears the error injection, waits out
+   the cooldown and sends HALF-OPEN probes that close the circuits again
+   automatically. Everything restores itself, even if the burst fails.
+2. **Circuit Breakers card** (Virtual Lab): live CLOSED / OPEN / HALF-OPEN
+   badges per instance with failure counts, used probe slots and the remaining
+   cooldown — streamed with the 1 s gateway metric snapshots over Socket.IO.
+3. **Backends rows** show the same circuit state as a badge, deliberately
+   separate from the health dot (administrative availability).
+4. **System Overview** gained a **Circuits Open** counter (OPEN + probing).
+5. Blocked requests appear in Request Logs as `503` with
+   `error=circuit_open`; they are never counted as backend failures and never
+   degrade gateway health at the entry LB (`x-edgegate-circuit: open` marker).
+
 ## MongoDB & Redis usage
 
 - **MongoDB**: `routeconfigs` (versioned routing tables), `configaudits` (who changed what when), `requestlogs` (every processed request, batch-inserted), `users` (demo login).
 - **Redis Pub/Sub channels**: `edgegate:config` (routing updates), `edgegate:logs` (async log stream), `edgegate:metrics` (1 s metric snapshots), `edgegate:backend-cmd` / `edgegate:gateway-cmd` (failure commands), `edgegate:reset`.
-- **Redis data keys**: `edgegate:rl:v<version>:<route>:<client>` — shared fixed-window rate-limit counters (Lua INCR/PEXPIRE/PTTL), the only data Redis holds; everything else stays Pub/Sub.
+- **Redis data keys**: `edgegate:rl:v<version>:<route>:<client>` — shared fixed-window rate-limit counters (Lua INCR/PEXPIRE/PTTL) and `edgegate:cb:<backendPort>` — per-instance circuit-breaker state hashes (P2.5.1); everything else stays Pub/Sub.
 - Routing state is never kept only in the browser; gateways each own an in-memory copy kept in sync over Pub/Sub and replaced atomically.
 
 ## Automated testing
 
-```bash
-npm run db:up        # tests need MongoDB + Redis
-npm test             # all Jest suites, including the performance test
-npm run test:performance   # run the autocannon performance test by itself
-npm run build --prefix frontend
+```powershell
+docker compose -p gatelab-p261-test -f docker-compose.test.yml up -d --wait
+$env:JEST_TEST_MONGO_URI='mongodb://127.0.0.1:27019/edgegate_test?directConnection=true'
+$env:JEST_TEST_REDIS_URL='redis://127.0.0.1:6381/0'
+npm test
 ```
 
-The tests boot a dedicated mini-stack on ports 14001-14102/15000-15001 with a separate
-`edgegate_test` database, so they never collide with the running dev stack.
-The latest verification run passed **8 suites** including the P2.4 rate-limiting
-suite. The performance
-case in that run completed 358 requests at 119 requests/second, with 83 ms
-average latency and zero errors; these measurements vary by machine and load.
+The Jest setup requires explicit URI overrides and verifies that MongoDB and
+Redis are the healthy, tmpfs-only services from the isolated Compose project
+before starting its mini-stack. It rejects the development Mongo/Redis ports,
+remote hosts, and Atlas URLs. See [docs/p261-test-environment.md](docs/p261-test-environment.md)
+for the frontend build, isolated runtime profile, and manual verification steps.
 
 For browser-based smoke testing, start `npm run dev`, then use
 `http://localhost:5174/store` for customer workflows and the Virtual Lab,
@@ -560,13 +586,18 @@ Results depend on the machine, database state, and other running processes.
 - MongoDB is a single-node replica set: transactions work locally, but the database
   has no replica-level availability or failover.
 - Simulated fail/recover controls exercise service health behavior without killing
-  OS processes. The launcher does not automatically respawn a worker that exits unexpectedly.
-- In this Windows verification run, terminating a live backend worker also stopped
-  the backend launcher and its concurrently managed dev stack. Hard-process crash
-  recovery is therefore not claimed; injected fail/recover behavior was verified.
-- Passive backend/gateway circuits use consecutive forwarding failures and active
-  health checks. Simulated HTTP error responses are returned by the service and do
-  not represent a crashed process; circuit behavior is intentionally simple.
+  OS processes. Unexpected cluster-worker exits are reforked with exponential
+  backoff; each worker has a bounded restart budget (5 reforks per 60 seconds by
+  default), after which the supervisor logs that manual intervention is required.
+- Worker shutdown handles SIGTERM, closes its HTTP, Redis, and MongoDB resources, and lets
+  the supervisor wait up to 10 seconds before force-stopping a worker that does
+  not exit. Automatic crash recovery and bounded restart behavior were verified
+  in the isolated Docker runtime; Windows-local hard-process recovery was not
+  separately tested.
+- Circuit breakers are per backend instance in shared Redis, driven only by real
+  proxied traffic; active health checks never open or close them. A crashed
+  gateway's HALF-OPEN probe slot stays reserved until the circuit's safety TTL
+  (>= 60 s) expires, after which the circuit returns to CLOSED.
 - The admin product listing exposes active products only. Soft-deleted products
   are retained for past orders but cannot currently be restored through the API.
 - The storefront has no payment integration; local cart contents are not persisted

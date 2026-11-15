@@ -18,6 +18,8 @@ const { startHealthChecker } = require('./health/checker');
 const { signToken, verifyToken } = require('./auth/jwt');
 const { corsMiddleware, getAllowedOrigins, isAllowedOrigin } = require('./security/cors');
 const { clearRateLimitKeys } = require('./middleware/rateLimit');
+const { clearAuthThrottleKeys } = require('./middleware/authThrottle');
+const { CB_KEY_PREFIX, clearCircuitKeys } = require('./circuitBreaker');
 const registry = require('./registry');
 
 function createControlPlane({ port }) {
@@ -95,7 +97,7 @@ function createControlPlane({ port }) {
   });
 
   // ---------- metrics aggregation (every second) ----------
-  setInterval(() => {
+  const metricsTimer = setInterval(() => {
     const entry = metricSources.get('entry-lb') || {};
     const gateways = [...metricSources.values()].filter((s) => s.kind === 'gateway');
     const backends = [...metricSources.values()].filter((s) => s.kind === 'backend');
@@ -202,10 +204,16 @@ function createControlPlane({ port }) {
     const valid = { fail: ['down'], recover: ['up'], latency: ['latency'], errors: ['errors'] };
     if (!valid[action]) return res.status(400).json({ error: 'bad_request', message: 'action must be fail|recover|latency|errors' });
     const cmd = action === 'fail' ? 'down' : action === 'recover' ? 'up' : action;
-    const value = action === 'latency' ? (req.body.ms || 400) : action === 'errors' ? (req.body.rate || 0.3) : undefined;
+    const value = action === 'latency' ? (req.body.ms ?? 400) : action === 'errors' ? (req.body.rate ?? 0.3) : undefined;
     await publishCmd(CHANNELS.BACKEND_CMD, { port, action: cmd, value });
     // Gateways exclude the instance immediately for consistent LB behavior.
     if (cmd === 'down') await publishCmd(CHANNELS.BACKEND_CMD, { port, action: 'down' });
+    if (cmd === 'up') {
+      // Manual Recover resets the instance's shared circuit immediately, so
+      // a previously OPEN breaker cannot block the recovered backend behind
+      // an old cooldown (gateways also reset on receiving the command).
+      try { await publisher.del(`${CB_KEY_PREFIX}${port}`); } catch (_) {}
+    }
     res.json({ ok: true, port, action: cmd, value });
   });
 
@@ -252,14 +260,18 @@ function createControlPlane({ port }) {
   app.post('/api/reset', async (req, res, next) => {
     try {
       await publishCmd(CHANNELS.RESET, { ts: Date.now() });
-      // Also clear the shared rate-limit windows so exhausted routes can be
-      // demonstrated again immediately (never touches configuration history).
+      // Also clear the shared rate-limit windows, authentication throttle
+      // budgets and circuit-breaker state so exhausted routes / locked-out
+      // logins / open circuits can be demonstrated again immediately
+      // (never touches configuration history).
       const clearedKeys = await clearRateLimitKeys(publisher).catch(() => 0);
+      const clearedAuth = await clearAuthThrottleKeys(publisher).catch(() => 0);
+      const clearedCircuits = await clearCircuitKeys(publisher).catch(() => 0);
       await RequestLog.deleteMany({});
       metricSources.clear();
       history.length = 0;
       io.emit('logs-cleared');
-      res.json({ ok: true, message: `Lab counters, request logs and ${clearedKeys} rate-limit window(s) cleared (configuration history preserved)` });
+      res.json({ ok: true, message: `Lab counters, request logs, ${clearedKeys} rate-limit window(s), ${clearedAuth} auth-throttle window(s) and ${clearedCircuits} circuit(s) cleared (configuration history preserved)` });
     } catch (e) { next(e); }
   });
 
@@ -272,11 +284,12 @@ function createControlPlane({ port }) {
 
   async function close() {
     clearInterval(logFlush);
+    clearInterval(metricsTimer);
     health.close();
-    await new Promise((r) => server.close(r));
-    io.close(); sub.quit(); publisher.quit();
+    await io.close();
+    await Promise.all([sub.quit(), publisher.quit()]);
   }
-  return { server, io, close };
+  return { server, io, close, stopHealthChecker: () => health.close() };
 }
 
 module.exports = { createControlPlane };

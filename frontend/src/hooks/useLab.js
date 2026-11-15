@@ -16,6 +16,7 @@ export function useLab() {
   const [history, setHistory] = useState([]);
   const [gatewayMetrics, setGatewayMetrics] = useState([]);
   const [backendMetrics, setBackendMetrics] = useState([]);
+  const [circuits, setCircuits] = useState({}); // shared Redis circuit states (P2.5.1/P2.5.2)
   const [gatewayHealth, setGatewayHealth] = useState({});
   const [backendHealth, setBackendHealth] = useState({});
   const [status, setStatus] = useState(null);
@@ -44,6 +45,10 @@ export function useLab() {
       if (m.history) setHistory(m.history);
       if (m.gateways) setGatewayMetrics(m.gateways);
       if (m.backends) setBackendMetrics(m.backends);
+      // Every gateway reports the SAME shared Redis circuit states (P2.5.1);
+      // use the first snapshot that carries the circuits map (1 s refresh).
+      const withCircuits = (m.gateways || []).find((g) => g.circuits && Object.keys(g.circuits).length > 0);
+      if (withCircuits) setCircuits(withCircuits.circuits);
     };
     const onGatewayHealth = (snap) => setGatewayHealth({ ...snap });
     const onBackendHealth = (snap) => setBackendHealth({ ...snap });
@@ -82,7 +87,7 @@ export function useLab() {
   }, [token]);
 
   return {
-    connected, overview, history, gatewayMetrics, backendMetrics,
+    connected, overview, history, gatewayMetrics, backendMetrics, circuits,
     gatewayHealth, backendHealth, status, configVersion, newLogs, toast, notify,
   };
 }

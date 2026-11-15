@@ -132,6 +132,9 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
       case 'rate-limit':
         onScenario('rate-limit');
         break;
+      case 'circuit-breaker':
+        onScenario('circuit-breaker');
+        break;
       default:
         break;
     }
@@ -214,6 +217,7 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
         <button className="btn btn-scenario" onClick={() => scenario('route-change')}>5. Dynamic Route Change</button>
         <button className="btn btn-scenario" onClick={() => scenario('backend-failure')}>6. Backend Failure</button>
         <button className="btn btn-scenario" onClick={() => scenario('rate-limit')}>7. Rate Limiting</button>
+        <button className="btn btn-scenario" onClick={() => scenario('circuit-breaker')}>8. Circuit Breaker</button>
       </div>
 
       {isDevelopment && <>

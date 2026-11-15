@@ -12,7 +12,8 @@
 const request = require('supertest');
 const ENTRY = 'http://localhost:14100';
 const AUTH = 'http://localhost:15001';
-const TEST_DB = 'mongodb://127.0.0.1:27018/edgegate_test';
+const { getTestMongoUri } = require('./testTargetSafety');
+const TEST_DB = getTestMongoUri();
 
 const { connectDb, disconnectDb } = require('../backend/db');
 const { UserProfile, Product } = require('../backend/models');

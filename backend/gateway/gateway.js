@@ -3,20 +3,23 @@
  *
  * Request path:
  *   receive -> match routing rule (in-memory table) -> JWT middleware
- *   -> pick healthy backend instance (round-robin) -> reverse proxy
+ *   -> shared rate limit -> pick eligible backend instance
+ *   (not admin-hard-down, circuit CLOSED/HALF-OPEN, round-robin)
+ *   -> reverse proxy -> classify outcome into the shared Redis circuit
  *   -> record metrics + async log record (Redis -> control plane -> MongoDB)
  *
  * Runtime sync (all via Redis Pub/Sub, no restarts needed):
  *   CONFIG        - full routing snapshot -> atomic table replacement
- *   BACKEND_CMD   - fail/recover commands (health awareness)
+ *   BACKEND_CMD   - fail/recover commands (hard-down state + circuit reset)
  *   GATEWAY_CMD   - this gateway's own fail/recover simulation
- *   RESET         - clear counters
+ *   RESET         - clear counters + circuit state
  */
 const express = require('express');
 const http = require('http');
-const { forward } = require('../proxy');
+const { forward, destroyAgent } = require('../proxy');
 const { jwtAuthMiddleware } = require('../middleware/jwtAuth');
 const { createRateLimitMiddleware } = require('../middleware/rateLimit');
+const { createCircuitBreaker } = require('../circuitBreaker');
 const { createRoundRobin } = require('../loadBalancer/roundRobin');
 const registry = require('../registry');
 const { CHANNELS, createSubscriber, createRedis } = require('../redis');
@@ -33,12 +36,33 @@ function matchRoute(routes, path) {
   return null;
 }
 
-function createGatewayApp({ name, publishFn, rateLimitRedis }) {
+// Fail-open stub used only when no circuit breaker is supplied (defensive
+// default for embedders): everything is eligible and outcomes are ignored.
+function failOpenCircuitBreaker(name) {
+  return {
+    filterEligible: async (ports) => ({ eligible: [...(ports || [])], blocked: [] }),
+    admit: async () => ({ allowed: true, state: 'closed', retryAfterMs: 0 }),
+    recordSuccess: async () => ({ level: 0, state: 'closed', retryAfterMs: 0 }),
+    recordFailure: async () => ({ level: 0, state: 'closed', retryAfterMs: 0 }),
+    status: async (port) => ({ port: Number(port), state: 'closed', storedState: 'closed', failures: 0, probes: 0, retryAfterMs: 0 }),
+    statusAll: async (ports) => {
+      const map = {};
+      for (const p of ports || []) map[Number(p)] = { port: Number(p), state: 'closed', storedState: 'closed', failures: 0, probes: 0, retryAfterMs: 0 };
+      return map;
+    },
+    reset: async () => true,
+    resetAll: async () => 0,
+  };
+}
+
+function createGatewayApp({ name, publishFn, rateLimitRedis, circuitBreaker }) {
   const gwState = { selfDown: false }; // simulated gateway failure flag
+  const cb = circuitBreaker || failOpenCircuitBreaker(name);
 
   const app = express();
   app.use(corsMiddleware());
   const serviceInstances = backendInstances();
+  const allBackendPorts = [...new Set(Object.values(serviceInstances).flat())];
   const rr = createRoundRobin();
 
   // Universal request logger: publishes exactly one log record per /api
@@ -81,10 +105,12 @@ function createGatewayApp({ name, publishFn, rateLimitRedis }) {
     }));
   }
 
-  // Self health - polled by the entry LB and the control plane.
-  app.get('/gateway-health', (req, res) => {
+  // Self health - polled by the entry LB and the control plane. Includes
+  // the Redis-backed circuit states for monitoring (P2.5.1).
+  app.get('/gateway-health', async (req, res) => {
     if (gwState.selfDown) return res.status(503).json({ status: 'down', simulated: true });
-    res.json({ status: 'up', gateway: name, metrics: registry.state.metrics, configVersion: registry.state.configVersion });
+    const circuits = await cb.statusAll(allBackendPorts);
+    res.json({ status: 'up', gateway: name, metrics: registry.state.metrics, configVersion: registry.state.configVersion, circuits });
   });
   app.get('/health', (req, res) => {
     if (gwState.selfDown) return res.status(503).json({ status: 'down', simulated: true });
@@ -114,22 +140,63 @@ function createGatewayApp({ name, publishFn, rateLimitRedis }) {
     }
 
     const instances = serviceInstances[route.targetService] || [];
-    const healthy = registry.healthyBackends(route.targetService, instances);
-    if (healthy.length === 0) {
+    // Availability model (kept separate by design):
+    //   hardDown     - administrative Fail command (BACKEND_CMD)
+    //   circuit open - Redis-backed circuit breaker (P2.5.1)
+    // Active health checks never change either state.
+    const available = registry.healthyBackends(route.targetService, instances);
+    if (available.length === 0) {
+      registry.trackRequest(Date.now() - started, 503, req.jwtStatus);
       res.status(503).json({ error: 'service_unavailable', message: `All instances of ${route.targetService} are unhealthy` });
       return;
     }
 
+    // Filter out circuit-OPEN instances BEFORE round-robin selection, so
+    // blocked candidates never advance the round-robin cursor and HALF-OPEN
+    // probe slots are never consumed for candidates that will not actually
+    // receive a request. Fail-open keeps every candidate when Redis is down.
+    const { eligible, blocked } = await cb.filterEligible(available);
+    if (eligible.length === 0) {
+      // Every available instance is circuit-blocked: clean 503 (never
+      // counted as a backend failure anywhere).
+      const retryMs = blocked.reduce((min, b) => (b.retryAfterMs > 0 && (min === 0 || b.retryAfterMs < min) ? b.retryAfterMs : min), 0);
+      const retrySeconds = retryMs > 0 ? Math.max(1, Math.ceil(retryMs / 1000)) : 1;
+      registry.trackRequest(Date.now() - started, 503, req.jwtStatus);
+      // Header lets the entry LB distinguish a backend-circuit 503 from a
+      // genuine gateway failure (the body may already be streamed away).
+      res.set('x-edgegate-circuit', 'open');
+      res.set('Retry-After', String(retrySeconds));
+      res.status(503).json({
+        error: 'circuit_open',
+        message: `Circuit breaker is open for ${route.targetService} backend instance(s)`,
+        retryAfterMs: retryMs,
+      });
+      return;
+    }
+
     // Try up to 2 candidates so a just-failed instance is skipped immediately.
-    for (let attempt = 0; attempt < Math.min(2, healthy.length); attempt++) {
-      const instance = rr.next(route.targetService, healthy);
+    let circuitDenied = false; // lost a HALF-OPEN probe race
+    let attempted = false;     // actually forwarded at least once
+    for (let attempt = 0; attempt < Math.min(2, eligible.length); attempt++) {
+      const instance = rr.next(route.targetService, eligible);
       if (instance == null) break;
+      // Reserve BEFORE forwarding: performs the lazy OPEN -> HALF-OPEN
+      // transition and atomically consumes one probe slot if half-open.
+      const admission = await cb.admit(instance);
+      if (!admission.allowed) { circuitDenied = true; continue; }
+      attempted = true;
       try {
         res.locals.backendService = route.targetService;
         res.locals.backendInstance = String(instance);
         res.locals.logged = true; // proxy path publishes its own record below
         await forward(req, res, `http://127.0.0.1:${instance}`, 8000);
         const latency = Date.now() - started;
+        // Failure classification (P2.5.1): upstream 5xx and proxy errors
+        // (unreachable/timeout) are failures; 2xx/3xx/4xx are successes.
+        // Gateway-generated answers (429, 401, 404, 503...) never reach a
+        // record call at all.
+        if (res.statusCode >= 500) await cb.recordFailure(instance);
+        else await cb.recordSuccess(instance);
         registry.trackRequest(latency, res.statusCode, req.jwtStatus);
         publishLog({
           method: req.method, path: req.path,
@@ -139,8 +206,10 @@ function createGatewayApp({ name, publishFn, rateLimitRedis }) {
         return;
       } catch (err) {
         if (res.headersSent) return;
-        // Passive health: open the circuit locally; active checks will confirm recovery.
-        registry.markBackendFailure(instance);
+        // Connection refused / unreachable / upstream timeout: record the
+        // failure in the shared circuit. Local registry availability is NOT
+        // touched, so HALF-OPEN probes stay possible after the cooldown.
+        await cb.recordFailure(instance);
         res.locals.logged = true; // already published below
         publishLog({
           method: req.method, path: req.path,
@@ -150,12 +219,25 @@ function createGatewayApp({ name, publishFn, rateLimitRedis }) {
       }
     }
     if (!res.headersSent) {
+      if (circuitDenied && !attempted) {
+        // Every candidate was denied at admission (probe slots taken by the
+        // other gateways between filtering and forwarding).
+        registry.trackRequest(Date.now() - started, 503, req.jwtStatus);
+        res.set('x-edgegate-circuit', 'open');
+        res.set('Retry-After', '1');
+        res.status(503).json({
+          error: 'circuit_open',
+          message: `Circuit breaker is open for ${route.targetService} backend instance(s)`,
+          retryAfterMs: 1000,
+        });
+        return;
+      }
       registry.trackRequest(Date.now() - started, 502, req.jwtStatus);
       res.status(502).json({ error: 'bad_gateway', message: 'Backend instance(s) unreachable' });
     }
   });
 
-  return { app, gwState };
+  return { app, gwState, cb, allBackendPorts };
 }
 
 /**
@@ -167,8 +249,11 @@ async function startGateway({ port, name, cpUrl }) {
   // Persistent dedicated connection for shared rate-limit counters: one per
   // gateway process, never per request.
   const rateLimitRedis = createRedis();
+  // Persistent dedicated connection for the shared circuit-breaker state.
+  const cbRedis = createRedis();
+  const circuitBreaker = createCircuitBreaker({ redis: cbRedis, name });
   const { createGatewayApp } = require('./gateway');
-  const { app, gwState } = createGatewayApp({ name, publishFn: (ch, msg) => publisher.publish(ch, msg), rateLimitRedis });
+  const { app, gwState, cb, allBackendPorts } = createGatewayApp({ name, publishFn: (ch, msg) => publisher.publish(ch, msg), rateLimitRedis, circuitBreaker });
 
   const server = http.createServer(app);
 
@@ -200,29 +285,40 @@ async function startGateway({ port, name, cpUrl }) {
         registry.replaceRoutes(msg.routes, msg.version);
         console.log(`[${name}] config reloaded -> v${msg.version} (no restart)`);
       } else if (channel === CHANNELS.BACKEND_CMD) {
-        if (msg.action === 'down') registry.setBackendHealth(msg.port, false);
-        if (msg.action === 'up') registry.setBackendHealth(msg.port, true);
+        if (msg.action === 'down') {
+          // Administrative hard-down: exclude the instance locally.
+          registry.setBackendHealth(msg.port, false);
+        }
+        if (msg.action === 'up') {
+          // Manual Recover: restore the instance AND reset its circuit so a
+          // previously OPEN breaker cannot block the freshly recovered
+          // backend behind an old cooldown.
+          registry.setBackendHealth(msg.port, true);
+          cb.reset(msg.port);
+        }
       } else if (channel === CHANNELS.GATEWAY_CMD && Number(msg.port) === Number(port)) {
         gwState.selfDown = msg.action === 'down';
         console.log(`[${name}] ${gwState.selfDown ? 'simulated OFFLINE' : 'recovered'}`);
       } else if (channel === CHANNELS.RESET) {
         registry.resetMetrics();
+        cb.resetAll();
       }
     } catch (e) { console.error(`[${name}] pubsub error: ${e.message}`); }
   });
 
   // --- periodic real metrics snapshot -> control plane ---
   let lastRequests = 0;
-  const metricsTimer = setInterval(() => {
+  const metricsTimer = setInterval(async () => {
     const m = registry.state.metrics;
     const rps = Math.max(0, m.requests - lastRequests);
     lastRequests = m.requests;
+    const circuits = await cb.statusAll(allBackendPorts);
     publisher.publish(CHANNELS.METRICS, JSON.stringify({
       source: name, kind: 'gateway',
       requests: m.requests, success: m.success, failed: m.failed, unauthorized: m.unauthorized,
       rateLimited: m.rateLimited,
       avgLatency: m.requests ? Math.round(m.totalLatencyMs / m.requests) : 0,
-      rps, configVersion: registry.state.configVersion, healthy: !gwState.selfDown, ts: Date.now(),
+      rps, configVersion: registry.state.configVersion, circuits, healthy: !gwState.selfDown, ts: Date.now(),
     }));
   }, 1000);
 
@@ -232,7 +328,8 @@ async function startGateway({ port, name, cpUrl }) {
     clearInterval(metricsTimer);
     clearInterval(retry);
     await new Promise((r) => server.close(r));
-    sub.quit(); publisher.quit(); rateLimitRedis.quit();
+    destroyAgent();
+    await Promise.all([sub.quit(), publisher.quit(), rateLimitRedis.quit(), cbRedis.quit()]);
   }
   return { server, close };
 }

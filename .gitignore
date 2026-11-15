@@ -6,3 +6,7 @@ tests/.test-stack.pid
 .env
 .env.*
 !.env.example
+# Local database dumps and backup archives are never version-controlled.
+backups/
+*.tgz
+*.tar.gz

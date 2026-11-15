@@ -11,11 +11,11 @@
  *   - instant: Redis GATEWAY_CMD events exclude a simulated-offline gateway
  */
 const http = require('http');
-const { forward } = require('../proxy');
+const { forward, destroyAgent } = require('../proxy');
 const registry = require('../registry');
 const { CHANNELS, createSubscriber, createRedis } = require('../redis');
 const { getCorsHeaders } = require('../security/cors');
-const { normalizeClientIp } = require('../middleware/rateLimit');
+const { overwriteForwardedFor } = require('../security/trustedProxy');
 
 async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
   const publisher = createRedis();
@@ -70,17 +70,22 @@ async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
     const target = rr.next('gateways', healthy);
     distribution[target] = (distribution[target] || 0) + 1;
     // Trusted client IP for the gateway rate limiter: OVERWRITE (never append
-    // to) X-Forwarded-For so clients cannot forge identity headers. Direct
-    // gateway clients are loopback-only and not publicly reachable.
-    req.headers['x-forwarded-for'] = normalizeClientIp(req.socket.remoteAddress);
+    // to) X-Forwarded-For so clients cannot forge identity headers. Behind the
+    // production nginx the peer is a trusted proxy, so the real client address
+    // is taken from its X-Real-IP header; untrusted peers keep their socket
+    // address and any client-supplied forwarded headers are ignored (P2.6.1).
+    overwriteForwardedFor(req);
     try {
       await forward(req, res, `http://127.0.0.1:${target}`, 10000);
       const latency = Date.now() - started;
       registry.trackRequest(latency, res.statusCode, 'none', res.statusCode === 429);
       if (res.statusCode >= 502 && res.statusCode !== 503) registry.markGatewayFailure(target);
-      if (res.statusCode === 503) {
-        // Could be a simulated gateway failure or an all-backends-down case;
-        // the active poller will confirm and correct if needed.
+      const circuitHeader = res.proxiedResponse && res.proxiedResponse.headers['x-edgegate-circuit'];
+      if (res.statusCode === 503 && !circuitHeader) {
+        // A 503 carrying x-edgegate-circuit is a backend-circuit decision the
+        // gateway made while fully healthy (P2.5.1) - it must NOT degrade the
+        // gateway itself. Genuine gateway failures / all-backends-down keep
+        // the existing passive marking; the active poller confirms.
         registry.markGatewayFailure(target);
       }
     } catch (_) {
@@ -112,7 +117,8 @@ async function startEntryLb({ port, gatewayPorts, healthIntervalMs }) {
   async function close() {
     clearInterval(checker); clearInterval(metricsTimer);
     await new Promise((r) => server.close(r));
-    sub.quit(); publisher.quit();
+    destroyAgent();
+    await Promise.all([sub.quit(), publisher.quit()]);
   }
   return { server, close };
 }

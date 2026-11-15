@@ -14,17 +14,26 @@ const { User } = require('../models');
 const { signToken, verifyToken } = require('./jwt');
 const { registerUser, authenticateCustomer } = require('../services/usersApi');
 const { corsMiddleware } = require('../security/cors');
+const { createAuthThrottleMiddleware } = require('../middleware/authThrottle');
 
-function createAuthApp() {
+/**
+ * @param {object} [opts]
+ * @param {object|null} [opts.redis] shared Redis connection. When provided,
+ *   login/registration get IP-based throttling (P2.6.1); without it the auth
+ *   service runs unthrottled exactly as before (dev tools, unit tests).
+ */
+function createAuthApp({ redis } = {}) {
   const app = express();
   const isProduction = process.env.NODE_ENV === 'production';
   app.use(corsMiddleware());
   app.use(express.json({ limit: '256kb' }));
 
   const expiresIn = process.env.JWT_EXPIRES_IN || '1h';
+  const loginThrottle = createAuthThrottleMiddleware({ redis, kind: 'login' });
+  const registerThrottle = createAuthThrottleMiddleware({ redis, kind: 'register' });
 
   if (!isProduction) {
-    app.post('/auth/login', async (req, res, next) => {
+    app.post('/auth/login', loginThrottle, async (req, res, next) => {
       try {
         const { username, password } = req.body || {};
         if (!username || !password) return res.status(400).json({ error: 'bad_request', message: 'username and password required' });
@@ -71,14 +80,14 @@ function createAuthApp() {
   // (existing routing config is unchanged) while registration and login must
   // be reachable without a token. Both reuse the SAME JWT mechanism (same
   // signToken / JWT_SECRET / expiry) - no competing token scheme.
-  app.post('/auth/register', async (req, res, next) => {
+  app.post('/auth/register', registerThrottle, async (req, res, next) => {
     try {
       const user = await registerUser(req.body);
       res.status(201).json({ message: 'Registration successful', user });
     } catch (e) { next(e); }
   });
 
-  app.post('/auth/customer-login', async (req, res, next) => {
+  app.post('/auth/customer-login', loginThrottle, async (req, res, next) => {
     try {
       const { email, password } = req.body || {};
       const user = await authenticateCustomer(email, password);

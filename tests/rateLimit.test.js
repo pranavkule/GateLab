@@ -3,7 +3,7 @@
  *
  * Runs against the real miniature stack (tests/stackRunner.js):
  *   entry LB :14100 -> gateways :14101/:14102 -> backends, control plane :15000,
- *   auth :15001, Redis :6380, MongoDB edgegate_test.
+ *   auth :15001, Redis :6381, MongoDB edgegate_test.
  *
  * Rate-limit counters are scoped by (config version, route id, identity), so
  * every applied configuration version starts with a fresh budget and tests
@@ -20,13 +20,14 @@ const {
   clearRateLimitKeys,
   normalizeClientIp,
 } = require('../backend/middleware/rateLimit');
+const { getTestRedisUrl } = require('./testTargetSafety');
 
 const ENTRY = 'http://localhost:14100';
 const GW1 = 'http://127.0.0.1:14101';
 const GW2 = 'http://127.0.0.1:14102';
 const CP = 'http://localhost:15000';
 const AUTH = 'http://localhost:15001';
-const TEST_REDIS = 'redis://localhost:6380';
+const TEST_REDIS = getTestRedisUrl();
 
 const redis = new Redis(TEST_REDIS);
 let adminToken = null;

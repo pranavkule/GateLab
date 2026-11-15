@@ -11,8 +11,13 @@ function Dot({ status }) {
  * Three microservices x two instances (ports from frontend/.env). Health is actively
  * polled by the control plane; a failed instance stops receiving new
  * traffic because the gateways exclude it from load balancing.
+ *
+ * P2.5.2: each instance row also shows the state of its shared Redis
+ * circuit breaker (CLOSED / OPEN / HALF-OPEN) - deliberately separate from
+ * the health dot, which only reflects administrative availability.
  */
-export default function Backends({ backendHealth, backendMetrics, notify }) {
+export default function Backends({ backendHealth, backendMetrics, circuits, notify }) {
+  const circuitOf = (port) => (circuits || {})[String(port)];
   // Configured instances per service (from frontend/.env). If the control
   // plane reports extra instances they are picked up from live health data.
   const services = Object.keys(BACKEND_INSTANCES).map((key) => {
@@ -66,17 +71,31 @@ export default function Backends({ backendHealth, backendMetrics, notify }) {
                 <div><span>Avg latency</span><b>{avgLat != null ? `${avgLat} ms` : '-'}</b></div>
               </div>
               <div className="instance-list">
-                {instances.map((i) => (
-                  <div className="instance-row" key={i.port}>
-                    <Dot status={i.h.healthy === false ? 'offline' : 'online'} />
-                    <span>:{i.port}</span>
-                    <span className="muted">{i.m.requests || 0} reqs</span>
-                    <div className="instance-row-actions">
-                      <button className="btn btn-xs btn-outline-red" disabled={i.h.healthy === false} onClick={() => act(i.port, 'fail', null, `Instance :${i.port} failed`)}><Power size={11} /> Fail</button>
-                      <button className="btn btn-xs btn-outline-green" disabled={i.h.healthy !== false} onClick={() => act(i.port, 'recover', null, `Instance :${i.port} recovered`)}><Play size={11} /> Recover</button>
+                {instances.map((i) => {
+                  const c = circuitOf(i.port);
+                  const circuitState = c ? c.state : null;
+                  return (
+                    <div className="instance-row" key={i.port}>
+                      <Dot status={i.h.healthy === false ? 'offline' : 'online'} />
+                      <span>:{i.port}</span>
+                      {circuitState && circuitState !== 'closed' && (
+                        <span
+                          className={`badge ${circuitState === 'open' ? 'badge-red' : 'badge-orange'}`}
+                          title={circuitState === 'open'
+                            ? `Circuit OPEN${c.retryAfterMs > 0 ? ` - probe in ~${Math.ceil(c.retryAfterMs / 1000)} s` : ''}`
+                            : 'Circuit HALF-OPEN - probe requests only'}
+                        >
+                          {circuitState === 'open' ? 'Circuit OPEN' : 'HALF-OPEN'}
+                        </span>
+                      )}
+                      <span className="muted">{i.m.requests || 0} reqs</span>
+                      <div className="instance-row-actions">
+                        <button className="btn btn-xs btn-outline-red" disabled={i.h.healthy === false} onClick={() => act(i.port, 'fail', null, `Instance :${i.port} failed`)}><Power size={11} /> Fail</button>
+                        <button className="btn btn-xs btn-outline-green" disabled={i.h.healthy !== false} onClick={() => act(i.port, 'recover', null, `Instance :${i.port} recovered`)}><Play size={11} /> Recover</button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="instance-actions">
                 <button className="btn btn-sm btn-outline-orange" onClick={() => act(instances[0].port, 'latency', { ms: 400 }, `Simulated 400 ms latency on :${instances[0].port}`)}>

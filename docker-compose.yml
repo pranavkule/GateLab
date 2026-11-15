@@ -11,7 +11,10 @@ services:
     ports:
       - "80:80"
     networks:
-      - appnet
+      # appnet reserves this address for nginx; keep it aligned with the
+      # backend's TRUSTED_PROXIES setting.
+      appnet:
+        ipv4_address: 172.30.250.2
     restart: unless-stopped
 
   backend:
@@ -29,6 +32,8 @@ services:
       REDIS_URL: ${DOCKER_REDIS_URL:?DOCKER_REDIS_URL must be set to an authenticated URL using redis:6379}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set for Docker production}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set for Docker production}
+      # Only the frontend's fixed address may supply forwarded client IPs.
+      TRUSTED_PROXIES: 172.30.250.2
       HEALTH_CHECK_INTERVAL: 3000
       PROXY_TIMEOUT: 8000
     depends_on:
@@ -76,6 +81,9 @@ services:
 networks:
   appnet:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24
 
 volumes:
   redis_data:

@@ -24,7 +24,11 @@ const CONCEPTS = [
   },
   {
     title: 'What is Health Checking?',
-    body: 'Active checks: the control plane polls every backend /health endpoint (and the entry LB polls every gateway) every 3 seconds. Passive checks: gateways open a small circuit breaker after repeated forwarding errors. A failed instance stops receiving traffic until its health check passes again.',
+    body: 'Active checks: the control plane polls every backend /health endpoint (and the entry LB polls every gateway) every 3 seconds. Those checks are monitoring only - they never open or close a circuit. Failed instances are excluded from traffic by the circuit breaker described below; administrative Fail/Recover commands are a separate, manual availability switch.',
+  },
+  {
+    title: 'What is a Circuit Breaker?',
+    body: 'A per-backend-instance safety switch that lives in Redis, shared by all gateway processes. CLOSED means normal traffic while consecutive failures (upstream 5xx, unreachable, timeout) are counted; after the threshold the circuit OPENs and requests get 503 circuit_open with Retry-After instead of hitting the failing instance. After a cooldown the circuit becomes HALF-OPEN and admits a limited number of probe requests: a successful probe closes the circuit again, a failed probe reopens it with a fresh cooldown. All transitions are atomic Lua scripts, so concurrent gateways can never exceed the probe limit. Health checks never touch the breaker; a manual Recover resets it.',
   },
   {
     title: 'What is Redis Pub/Sub?',
@@ -55,6 +59,7 @@ const DEMO_STEPS = [
   'Gateway failure: "Simulate Failure" on Gateway 2 - the entry LB routes only to Gateways 1 and 3.',
   'Recovery: "Recover" the failed instances - they rejoin the round-robin after the next health check.',
   'Rate limiting: Quick Scenario 7 applies 5 requests / 15 s to /api/products, bursts 10 real requests - watch ~5 succeed then 429s with Retry-After (check Request Logs for the 429 rows). Configuration restores automatically.',
+  'Circuit breaker: Quick Scenario 8 injects 100% errors on both Product Service instances and bursts real requests - the upstream 500s open the shared Redis circuits, further requests are BLOCKED with 503 circuit_open, then after the cooldown HALF-OPEN probes succeed and the circuits close automatically (watch the Circuit Breakers card, the Backends rows and the "Circuits Open" overview stat). Error injection is cleared and everything recovers automatically.',
   'Monitoring: review the System Overview chart and the Request Logs table; everything you saw was measured, never faked.',
 ];
 
@@ -90,7 +95,8 @@ export default function GuidePage() {
 +-----------+ +-----------+ +-----------+
 
 MongoDB (:27018)  -> routing versions, audit, request logs, users
-Redis (:6380)     -> config Pub/Sub, log/metric streaming
+Redis (:6380)     -> config Pub/Sub, log/metric streaming,
+                     rate-limit counters, circuit-breaker state
 Control plane (5010) -> REST + Socket.IO live monitoring`}</pre>
       </section>
 

@@ -12,7 +12,13 @@ const state = {
   // replaced atomically on config updates, never mutated in place).
   routes: [],
   configVersion: 0,
-  // Backend instance health as known locally: { '4001': {healthy:true, failures:0} }
+  // Backend instance availability as known locally:
+  // { '4001': {hardDown:false, failures:0} }
+  // hardDown is ONLY the administrative Fail/Recover state (BACKEND_CMD).
+  // Ordinary forwarding failures are tracked by the Redis-backed circuit
+  // breaker (P2.5.1), never by flipping a local healthy flag here - that
+  // would permanently hide an instance and block HALF-OPEN probing.
+  // `failures` stays as a passive diagnostics counter only.
   backends: {},
   // Gateway health as known locally (used by the entry LB): { '3011': {healthy:true} }
   gateways: {},
@@ -35,23 +41,29 @@ function resetMetrics() {
 }
 
 function setBackendHealth(port, healthy) {
-  if (!state.backends[port]) state.backends[port] = { healthy, failures: 0 };
-  state.backends[port].healthy = healthy;
+  if (!state.backends[port]) state.backends[port] = { hardDown: false, failures: 0 };
+  state.backends[port].hardDown = !healthy;
   if (healthy) state.backends[port].failures = 0;
 }
 
 function markBackendFailure(port) {
-  if (!state.backends[port]) state.backends[port] = { healthy: true, failures: 0 };
+  if (!state.backends[port]) state.backends[port] = { hardDown: false, failures: 0 };
+  state.backends[port].failures += 1;
+  // P2.5.1: passive failures NEVER flip local availability. Circuit
+  // exclusion (open/half-open probe limiting) is owned by the shared
+  // Redis-backed circuit breaker; active health checks + manual Recover
+  // stay the authoritative availability signals.
+}
+
+function isBackendHardDown(port) {
   const b = state.backends[port];
-  b.failures += 1;
-  // 3 consecutive failures = circuit opens (passive health)
-  if (b.failures >= 3) b.healthy = false;
+  return Boolean(b && b.hardDown);
 }
 
 function healthyBackends(service, instances) {
   return (instances || []).filter((p) => {
     const b = state.backends[p];
-    return !b || b.healthy !== false;
+    return !b || b.hardDown !== true;
   });
 }
 
@@ -90,6 +102,7 @@ module.exports = {
   resetMetrics,
   setBackendHealth,
   markBackendFailure,
+  isBackendHardDown,
   healthyBackends,
   setGatewayHealth,
   markGatewayFailure,

@@ -1,0 +1,95 @@
+services:
+  test-mongodb:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "127.0.0.1:27019:27017"
+    tmpfs:
+      - /data/db:size=512m
+      - /data/configdb:size=64m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --eval 'try { if (rs.status().myState === 1) quit(0); } catch (e) {}
+          try { rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "test-mongodb:27017" }] }); } catch (e) {}
+          quit(1)'
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    networks:
+      - runtime_testnet
+
+  test-redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6381:6379"
+    tmpfs:
+      - /data:size=128m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - runtime_testnet
+
+  backend:
+    profiles: ["runtime"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      NODE_ENV: development
+      MONGO_URI: mongodb://test-mongodb:27017/edgegate_runtime_test?replicaSet=rs0
+      REDIS_URL: redis://test-redis:6379/0
+      JWT_SECRET: disposable-runtime-test-key-not-for-reuse
+      DEMO_USER: disposable-admin
+      DEMO_PASSWORD: disposable-admin-password
+      ALLOWED_ORIGINS: http://127.0.0.1:8080,http://localhost:8080
+      TRUSTED_PROXIES: 172.30.252.2
+      AUTH_LOGIN_RATE_LIMIT: "2"
+      AUTH_REGISTER_RATE_LIMIT: "2"
+      AUTH_RATE_WINDOW_MS: "60000"
+      WORKER_MAX_RESTARTS: "5"
+      WORKER_RESTART_BACKOFF_MS: "1000"
+    depends_on:
+      test-mongodb:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3010/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - runtime_testnet
+
+  frontend:
+    profiles: ["runtime"]
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      runtime_testnet:
+        ipv4_address: 172.30.252.2
+
+networks:
+  runtime_testnet:
+    ipam:
+      config:
+        - subnet: 172.30.252.0/24
+          ip_range: 172.30.252.128/25
+          gateway: 172.30.252.1

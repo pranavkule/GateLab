@@ -46,6 +46,10 @@ function forward(req, res, targetUrl, t) {
       },
       (upRes) => {
         // Relay status line + headers, then pipe the body.
+        // Capture the relayed upstream response for callers that need to
+        // inspect it afterwards (headers passed to writeHead are NOT
+        // visible to res.getHeader in Node).
+        res.proxiedResponse = { statusCode: upRes.statusCode, headers: { ...upRes.headers } };
         const head = { ...upRes.headers };
         delete head.connection;
         delete head['keep-alive'];
@@ -99,4 +103,13 @@ function finishUpstream(upstream, body, resolve, reject) {
   upstream.end();
 }
 
-module.exports = { forward };
+/**
+ * Destroys every pooled/active keep-alive socket so the owning process's
+ * event loop can drain during shutdown. Safe to call repeatedly and while
+ * requests are in flight (destroy() also cancels pending requests).
+ */
+function destroyAgent() {
+  agent.destroy();
+}
+
+module.exports = { forward, destroyAgent, agent };
