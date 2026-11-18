@@ -15,6 +15,8 @@
     "seed:data": "node backend/scripts/seedData.js",
     "seed:catalog": "node backend/scripts/seedCatalog.js",
     "admin:provision": "node backend/scripts/provisionAdmin.js",
+    "student:provision": "node backend/scripts/provisionStudent.js",
+    "student:migrate-passwords": "node backend/scripts/migrateStudentPasswords.js",
     "stop": "powershell -ExecutionPolicy Bypass -File scripts/stop.ps1",
     "test": "jest --runInBand --forceExit",
     "test:performance": "jest tests/performance.test.js --runInBand --forceExit --testTimeout=180000"

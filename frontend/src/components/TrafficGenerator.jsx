@@ -26,7 +26,7 @@ function jwtPayload(token) {
  * balancer on :{ENTRY_LB_PORT} - every metric and log row on this page is
  * produced by these requests.
  */
-export default function TrafficGenerator({ notify, onScenario, token, setToken }) {
+export default function TrafficGenerator({ notify, onScenario, token, setToken, canManage = false }) {
   const [method, setMethod] = useState('GET');
   const [endpoint, setEndpoint] = useState('/api/users');
   const [auth, setAuth] = useState('none'); // none | valid | invalid | expired
@@ -195,9 +195,11 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
       <button className="btn btn-outline-blue btn-block" disabled={running || !validAuthAvailable} onClick={() => runTraffic(1)}>
         <Zap size={14} /> Send Single Request
       </button>
-      <button className="btn btn-outline-blue btn-block" onClick={async () => { await api.resetLab(); notify('Lab counters reset (config history preserved)', 'info'); }}>
-        <RotateCcw size={14} /> Reset Counts
-      </button>
+      {canManage && (
+        <button className="btn btn-outline-blue btn-block" onClick={async () => { await api.resetLab(); notify('Lab counters reset (config history preserved)', 'info'); }}>
+          <RotateCcw size={14} /> Reset Counts
+        </button>
+      )}
 
       {running && (
         <div className="mini-stats">
@@ -214,13 +216,15 @@ export default function TrafficGenerator({ notify, onScenario, token, setToken }
         <button className="btn btn-scenario" onClick={() => scenario('missing-jwt')}>2. Missing JWT Request</button>
         <button className="btn btn-scenario" onClick={() => scenario('invalid-jwt')}>3. Invalid JWT Request</button>
         {isDevelopment && <button className="btn btn-scenario" onClick={() => scenario('expired-jwt')}>4. Expired JWT Request</button>}
-        <button className="btn btn-scenario" onClick={() => scenario('route-change')}>5. Dynamic Route Change</button>
-        <button className="btn btn-scenario" onClick={() => scenario('backend-failure')}>6. Backend Failure</button>
-        <button className="btn btn-scenario" onClick={() => scenario('rate-limit')}>7. Rate Limiting</button>
-        <button className="btn btn-scenario" onClick={() => scenario('circuit-breaker')}>8. Circuit Breaker</button>
+        {canManage && <>
+          <button className="btn btn-scenario" onClick={() => scenario('route-change')}>5. Dynamic Route Change</button>
+          <button className="btn btn-scenario" onClick={() => scenario('backend-failure')}>6. Backend Failure</button>
+          <button className="btn btn-scenario" onClick={() => scenario('rate-limit')}>7. Rate Limiting</button>
+          <button className="btn btn-scenario" onClick={() => scenario('circuit-breaker')}>8. Circuit Breaker</button>
+        </>}
       </div>
 
-      {isDevelopment && <>
+      {isDevelopment && canManage && <>
         <div className="divider" />
         <div className="card-head"><h3>Development Demo Login</h3></div>
         <div className="field-row">

@@ -13,13 +13,14 @@ import CheckoutPage from './store/pages/CheckoutPage';
 import AccountPages from './store/pages/AccountPages';
 import AdminPage from './store/pages/AdminPage';
 import { StoreProvider, useStore } from './store/StoreContext';
+import { canAccessLab, isAdmin } from './services/roles';
 
 export default function App() {
   return (
     <StoreProvider>
       <div className="app">
         <Routes>
-          <Route path="/login" element={<StoreAuthPage mode="login" />} />
+          <Route path="/login" element={<StoreAuthPage mode="login" standalone />} />
           <Route path="/store" element={<StorefrontApp />}>
             <Route index element={<StoreHomePage />} />
             <Route path="products/:id" element={<ProductDetailPage />} />
@@ -35,7 +36,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/store" replace />} />
           </Route>
           <Route path="/" element={<LabAccess><LabLayout><LabPage /></LabLayout></LabAccess>} />
-          <Route path="/configuration" element={<LabAccess><LabLayout><ConfigPage /></LabLayout></LabAccess>} />
+          <Route path="/configuration" element={<AdminAccess><LabLayout><ConfigPage /></LabLayout></AdminAccess>} />
           <Route path="/guide" element={<LabAccess><LabLayout><GuidePage /></LabLayout></LabAccess>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
@@ -48,15 +49,43 @@ function LabAccess({ children }) {
   const { user } = useStore();
   const location = useLocation();
 
-  if (import.meta.env.PROD && !user) {
+  if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
-  if (user && user.role !== 'admin') {
+  if (!canAccessLab(user)) {
+    return (
+      <section className="store-panel store-message">
+        <h1>Virtual Lab access required</h1>
+        <p>The Virtual Lab is available to administrator and student accounts. Customer accounts continue to the Demo Store.</p>
+        <Link className="store-button store-button-primary" to="/store">Return to the store</Link>
+      </section>
+    );
+  }
+  return children;
+}
+
+function AdminAccess({ children }) {
+  const { user } = useStore();
+  const location = useLocation();
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  if (!canAccessLab(user)) {
+    return (
+      <section className="store-panel store-message">
+        <h1>Virtual Lab access required</h1>
+        <p>The Virtual Lab is available to administrator and student accounts. Customer accounts continue to the Demo Store.</p>
+        <Link className="store-button store-button-primary" to="/store">Return to the store</Link>
+      </section>
+    );
+  }
+  if (!isAdmin(user)) {
     return (
       <section className="store-panel store-message">
         <h1>Administrator access required</h1>
-        <p>The Virtual Lab and configuration controls are available only to an administrator.</p>
-        <Link className="store-button store-button-primary" to="/store">Return to the store</Link>
+        <p>Configuration controls are available only to an administrator.</p>
+        <Link className="store-button store-button-primary" to="/">Return to the dashboard</Link>
       </section>
     );
   }

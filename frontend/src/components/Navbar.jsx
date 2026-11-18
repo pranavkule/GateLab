@@ -2,11 +2,13 @@ import React from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Activity, BookOpen, RotateCcw, Settings } from 'lucide-react';
 import { api } from '../services/api';
+import { isAdmin } from '../services/roles';
 import { useStore } from '../store/StoreContext';
 
 export default function Navbar({ onReset }) {
   const { user, logout } = useStore();
   const navigate = useNavigate();
+  const admin = isAdmin(user);
 
   async function resetLab() {
     try {
@@ -29,14 +31,16 @@ export default function Navbar({ onReset }) {
       </div>
       <div className="navbar-links">
         <NavLink to="/" end>Dashboard</NavLink>
-        <NavLink to="/configuration">Configuration</NavLink>
+        {admin && <NavLink to="/configuration">Configuration</NavLink>}
         <NavLink to="/guide">Guide</NavLink>
         <Link to="/store">Demo Store</Link>
         {!user && <Link to="/login">Sign In</Link>}
         {user && <button className="btn btn-outline-light" onClick={() => { logout(); navigate('/login', { replace: true }); }}>Log out</button>}
-        <button className="btn btn-outline-light" onClick={resetLab}>
-          <RotateCcw size={14} /> Reset Lab
-        </button>
+        {admin && (
+          <button className="btn btn-outline-light" onClick={resetLab}>
+            <RotateCcw size={14} /> Reset Lab
+          </button>
+        )}
       </div>
     </nav>
   );

@@ -37,10 +37,12 @@ not a crash — recovery is instant.
   60 s throughput/latency history (all real values).
 - **Active health checker**: polls every backend `/health` and gateway
   `/gateway-health`, caches latency + request counts, broadcasts on change.
-- REST monitoring and administrative operations require a signed, unexpired
-  administrator JWT. Socket.IO requires the same administrator JWT and an
-  allowed browser origin. `/health` returns only a minimal status; gateways
-  can read only `/api/config/latest` without a user token for startup bootstrap.
+- REST monitoring and traffic simulation require a signed, unexpired
+  administrator or student JWT. Configuration, configuration history, reset,
+  fault injection, and log clearing require the administrator role. Socket.IO
+  accepts both lab roles and an allowed browser origin. `/health` returns only a
+  minimal status; gateways can read only `/api/config/latest` without a user
+  token for startup bootstrap. Customer JWTs stay store-only.
 
 ### 5. Auth service (`:5011`)
 Signs HS256 JWTs (`sub`, `role`, `iat`, `exp`) with a required environment
@@ -191,9 +193,10 @@ startup (sync mechanism) and retry until the control plane is reachable.
   Compose host ports bind to loopback as well. Production deployment must keep
   service/database ports on private networks and expose only a reverse proxy.
 - Browser origins are restricted by `ALLOWED_ORIGINS`; development defaults
-  allow the local Vite origin. CORS is not authentication: all Control Plane
-  REST operations and Socket.IO sessions separately require an administrator
-  JWT.
+  allow the local Vite origin. CORS is not authentication: Control Plane REST
+  operations and Socket.IO sessions separately require an administrator or
+  student JWT, with administrator authorization on configuration and fault
+  controls.
 - The single-node MongoDB replica set remains unauthenticated by default for
   local development. Production connection URLs must include credentials.
   Adding credentials to an existing Mongo volume requires provisioning users

@@ -364,3 +364,177 @@
   .cart-item-subtotal { font-size: 11px; }
   .receipt-actions { flex-direction: column; }
 }
+
+/* ---------- GateLab standalone auth ---------- */
+.gatelab-auth-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(420px, .95fr);
+  background: var(--bg);
+}
+.gatelab-auth-shell > * { min-width: 0; }
+
+.gatelab-auth-aside {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(34px, 5vw, 68px);
+  background: linear-gradient(150deg, #102d50 0%, #173f6c 58%, #2563eb 135%);
+  color: #fff;
+}
+.gatelab-auth-aside::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(122, 176, 255, .2), transparent 32%),
+    linear-gradient(180deg, transparent 58%, rgba(11, 31, 56, .3));
+  pointer-events: none;
+}
+.gatelab-auth-aside > :not(.gatelab-auth-watermark) { position: relative; z-index: 1; }
+.gatelab-auth-watermark {
+  position: absolute;
+  right: -78px;
+  bottom: -84px;
+  z-index: 0;
+  color: rgba(255, 255, 255, .08);
+  pointer-events: none;
+}
+
+.gatelab-brand { display: flex; align-items: center; gap: 10px; color: #fff; }
+.gatelab-brand > div { display: flex; flex-direction: column; gap: 4px; }
+.gatelab-brand .brand-icon { flex: 0 0 auto; }
+.gatelab-brand .brand-name { font-size: 18px; line-height: 1.1; }
+.gatelab-brand .brand-sub { max-width: 340px; color: #9db8d9; line-height: 1.35; }
+.gatelab-brand-compact .brand-name { font-size: 17px; }
+.gatelab-brand-compact .brand-sub { font-size: 10px; }
+.gatelab-brand-inverted .brand-name { color: #0f2a4a; }
+.gatelab-brand-inverted .brand-sub { color: #718096; }
+.gatelab-brand-inverted .brand-icon { color: #2563eb; }
+
+.gatelab-auth-intro { max-width: 550px; margin-top: clamp(34px, 8vh, 78px); }
+.gatelab-auth-aside .store-eyebrow { color: #a7cbff; }
+.gatelab-auth-intro h1 {
+  margin: 12px 0 15px;
+  color: #fff;
+  font-size: clamp(34px, 4vw, 48px);
+  line-height: 1.07;
+  letter-spacing: -1.4px;
+}
+.gatelab-auth-intro p { max-width: 500px; color: #c9dcf2; font-size: 15px; line-height: 1.6; }
+
+.gatelab-auth-points {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  max-width: 520px;
+  margin-top: 34px;
+  padding: 0;
+  list-style: none;
+}
+.gatelab-auth-points li { display: flex; align-items: flex-start; gap: 12px; }
+.gatelab-auth-point-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .08);
+  color: #bfdbfe;
+}
+.gatelab-auth-points li > div { display: flex; flex-direction: column; gap: 3px; }
+.gatelab-auth-points strong { color: #fff; font-size: 13px; font-weight: 650; }
+.gatelab-auth-points span { color: #bfd3ea; font-size: 12px; line-height: 1.45; }
+
+.gatelab-auth-aside-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .2);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.gatelab-auth-aside-link:hover { border-bottom-color: #fff; color: #fff; }
+
+.gatelab-auth-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(30px, 6vw, 64px);
+  background:
+    radial-gradient(circle at 82% 12%, rgba(37, 99, 235, .08), transparent 30%),
+    var(--bg);
+}
+.gatelab-auth-topbar { display: none; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.gatelab-auth-store-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #d6e2f2;
+  border-radius: 7px;
+  background: #fff;
+  color: #315d9c;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.gatelab-auth-store-link:hover { border-color: #b8cff0; background: #f7faff; color: #1d4ed8; }
+
+.gatelab-auth-card {
+  width: 100%;
+  max-width: 430px;
+  padding: 38px;
+  border-color: var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 42, 74, .1);
+}
+.gatelab-auth-card h1 { font-size: 30px; letter-spacing: -.8px; }
+.gatelab-auth-card > p { margin-bottom: 20px; font-size: 13px; }
+.gatelab-auth-card .store-auth-switch { margin-top: 20px; }
+
+.gatelab-auth-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 17px;
+  padding-top: 16px;
+  border-top: 1px solid #edf0f5;
+  color: #718096;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.gatelab-auth-note svg { flex: 0 0 auto; margin-top: 1px; color: #4f7cc0; }
+
+.gatelab-auth-footnote { margin-top: 28px; color: #8996a8; font-size: 11px; text-align: center; }
+
+@media (max-width: 900px) {
+  .gatelab-auth-shell { grid-template-columns: 1fr; }
+  .gatelab-auth-aside { display: none; }
+  .gatelab-auth-main { min-height: 100vh; justify-content: flex-start; padding: 20px 18px 36px; }
+  .gatelab-auth-topbar { display: flex; max-width: 460px; }
+  .gatelab-auth-card { margin-top: 8px; }
+  .gatelab-auth-footnote { margin-top: auto; padding-top: 28px; }
+}
+
+@media (max-width: 520px) {
+  .gatelab-auth-main { padding: 14px 14px 28px; }
+  .gatelab-auth-topbar { margin-bottom: 14px; }
+  .gatelab-auth-card { padding: 24px; border-radius: 12px; box-shadow: 0 14px 34px rgba(15, 42, 74, .09); }
+  .gatelab-auth-card h1 { font-size: 26px; }
+  .gatelab-brand .brand-sub { max-width: 210px; }
+  .gatelab-auth-store-link { padding: 7px 9px; font-size: 11px; }
+}

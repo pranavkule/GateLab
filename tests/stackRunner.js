@@ -42,6 +42,8 @@ const { startEntryLb } = require('../backend/gateway/entryLb');
 const { createControlPlane } = require('../backend/controlPlane');
 const { createAuthApp } = require('../backend/auth/authService');
 const { createRedis } = require('../backend/redis');
+const { User, UserProfile } = require('../backend/models');
+const { hashPassword } = require('../backend/utils/password');
 
 const CP_URL = 'http://localhost:15000';
 const handles = [];
@@ -87,6 +89,30 @@ process.on('message', (message) => { if (message === 'shutdown') shutdown(); });
   await connectDb();
   const cfg = await manager.getLatest();
   if (!cfg) await manager.seedIfEmpty();
+  await User.updateOne(
+    { username: 'edgegate-test-student' },
+    {
+      $set: {
+        username: 'edgegate-test-student',
+        passwordHash: await hashPassword('test-only-student-password'),
+        role: 'student',
+      },
+      $unset: { password: '' },
+    },
+    { upsert: true }
+  );
+  await UserProfile.updateOne(
+    { email: 'lab-admin@example.test' },
+    {
+      $setOnInsert: {
+        name: 'Lab Admin',
+        email: 'lab-admin@example.test',
+        passwordHash: await hashPassword('TestAdminPassword123'),
+        role: 'admin',
+      },
+    },
+    { upsert: true }
+  );
 
   handles.push(createControlPlane({ port: 15000 }));
   redis = createRedis();

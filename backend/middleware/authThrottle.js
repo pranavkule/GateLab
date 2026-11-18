@@ -7,8 +7,8 @@
  * LB). Separate budgets for login and registration. Responses mirror the P2.4
  * contract: 429 + Retry-After + X-RateLimit-* headers.
  *
- * Failure policy: fail open. If Redis is unavailable the middleware lets the
- * request through (throttled warning, same style as rateLimit.js).
+ * In production, Redis failures reject authentication with 503. Development
+ * remains fail-open so local work is not blocked by an unavailable Redis.
  */
 const { resolveClientIp } = require('../security/trustedProxy');
 
@@ -45,10 +45,28 @@ function createAuthThrottleMiddleware({ redis, kind, limit, windowMs } = {}) {
   const window = Number.isFinite(windowMs) && windowMs > 0
     ? windowMs
     : authThrottleEnv('AUTH_RATE_WINDOW_MS', 300000);
+  const failClosed = process.env.NODE_ENV === 'production';
   let warnCount = 0;
 
   return async function authThrottle(req, res, next) {
-    if (!redis || !max) { next(); return; }
+    function handleUnavailable(reason) {
+      if ((warnCount += 1) <= 3 || warnCount % 50 === 0) {
+        console.warn(`[auth-throttle] ${reason}; ${failClosed ? 'rejecting authentication' : 'failing open'} (total=${warnCount})`);
+      }
+      if (failClosed) {
+        res.status(503).json({
+          error: 'service_unavailable',
+          message: 'Authentication temporarily unavailable',
+        });
+        return;
+      }
+      next();
+    }
+
+    if (!redis || !max) {
+      handleUnavailable('Redis connection unavailable');
+      return;
+    }
     const clientIp = resolveClientIp(req);
     const key = `${AUTH_THROTTLE_KEY_PREFIX}${kind}:${clientIp}`;
     try {
@@ -56,8 +74,7 @@ function createAuthThrottleMiddleware({ redis, kind, limit, windowMs } = {}) {
       const count = Number(Array.isArray(result) ? result[0] : result);
       const ttl = Number(Array.isArray(result) ? result[1] : 0);
       if (!Number.isFinite(count)) {
-        console.warn('[auth-throttle] unexpected Redis response, failing open');
-        next();
+        handleUnavailable('Unexpected Redis response');
         return;
       }
       const remaining = Math.max(0, max - count);
@@ -76,11 +93,7 @@ function createAuthThrottleMiddleware({ redis, kind, limit, windowMs } = {}) {
       }
       next();
     } catch (err) {
-      // Fail open: throttling must not take authentication down with it.
-      if ((warnCount += 1) <= 3 || warnCount % 50 === 0) {
-        console.warn(`[auth-throttle] redis unavailable, failing open (total=${warnCount}): ${err.message}`);
-      }
-      next();
+      handleUnavailable('Redis unavailable');
     }
   };
 }

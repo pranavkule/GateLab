@@ -7,16 +7,17 @@ if (process.env.NODE_ENV === 'production') {
 const { connectDb, disconnectDb } = require('../db');
 const manager = require('../config/manager');
 const { User } = require('../models');
+const { hashPassword } = require('../utils/password');
 
 (async () => {
   await connectDb();
   const config = await manager.seedIfEmpty();
   console.log(`Active configuration: v${config.version}`);
-  const username = process.env.DEMO_USER || 'admin';
-  const password = process.env.DEMO_PASSWORD || 'admin123';
+  const username = process.env.DEMO_USER || 'student';
+  const password = process.env.DEMO_PASSWORD || 'student123';
   const exists = await User.findOne({ username });
   if (!exists) {
-    await User.create({ username, password, role: 'student' });
+    await User.create({ username, passwordHash: await hashPassword(password), role: 'student' });
     console.log(`Seeded demo user: ${username}`);
   } else {
     console.log(`Demo user exists: ${username}`);

@@ -17,7 +17,7 @@ function createProductionAuthApp() {
   process.env.NODE_ENV = 'production';
   process.env.ALLOWED_ORIGINS = 'https://store.example.test';
   try {
-    return createAuthApp();
+    return createAuthApp({ redis: { eval: async () => [1, 300000] } });
   } finally {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;
@@ -75,9 +75,9 @@ describe('Security baseline', () => {
     expect(result.stderr).toContain('Refusing to seed development demo data in production');
   });
 
-  test('production Auth Service omits development login, token, and plaintext verification routes', async () => {
+  test('production Auth Service enables student login and omits development token and verification routes', async () => {
     const app = createProductionAuthApp();
-    expect((await request(app).post('/auth/login').send({})).status).toBe(404);
+    expect((await request(app).post('/auth/login').send({})).status).toBe(400);
     expect((await request(app).post('/auth/token').send({})).status).toBe(404);
     expect((await request(app).post('/auth/verify').send({})).status).toBe(404);
     expect((await request(app).post('/auth/customer-login').send({})).status).toBe(400);
@@ -112,7 +112,7 @@ describe('Security baseline', () => {
     expect(result.body.identity).toBeNull();
   });
 
-  test('Control Plane requires an admin token for monitoring and mutations', async () => {
+  test('Control Plane allows lab roles to monitor and reserves mutations for admins', async () => {
     const noToken = await request(CP).get('/api/status');
     expect(noToken.status).toBe(401);
     expect((await request(CP).get('/api/logs')).status).toBe(401);
@@ -121,6 +121,23 @@ describe('Security baseline', () => {
     const adminToken = (await demo.json()).token;
     const admin = await request(CP).get('/api/status').set('Authorization', `Bearer ${adminToken}`);
     expect(admin.status).toBe(200);
+
+    const studentLogin = await fetch(`${AUTH}/auth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'valid' }),
+    });
+    expect(studentLogin.status).toBe(200);
+    const studentToken = (await studentLogin.json()).token;
+    const studentAuth = { Authorization: `Bearer ${studentToken}` };
+    expect((await request(CP).get('/api/status').set(studentAuth)).status).toBe(200);
+    expect((await request(CP).get('/api/logs').set(studentAuth)).status).toBe(200);
+    expect((await request(CP).get('/api/config/history').set(studentAuth)).status).toBe(403);
+    expect((await request(CP).put('/api/config').set(studentAuth).send({ routes: [] })).status).toBe(403);
+    expect((await request(CP).post('/api/backend/14001/fail').set(studentAuth).send({})).status).toBe(403);
+    expect((await request(CP).post('/api/gateway/14101/fail').set(studentAuth).send({})).status).toBe(403);
+    expect((await request(CP).delete('/api/logs').set(studentAuth)).status).toBe(403);
+    expect((await request(CP).post('/api/reset').set(studentAuth).send({})).status).toBe(403);
 
     const email = `security-${Date.now()}@example.test`;
     const registration = await fetch(`${AUTH}/auth/register`, {
@@ -135,8 +152,10 @@ describe('Security baseline', () => {
       body: JSON.stringify({ email, password: 'SecurityTest123' }),
     });
     const customerToken = (await login.json()).token;
-    expect((await request(CP).get('/api/logs').set('Authorization', `Bearer ${customerToken}`)).status).toBe(403);
-    expect((await request(CP).post('/api/reset').set('Authorization', `Bearer ${customerToken}`)).status).toBe(403);
+    const customerAuth = { Authorization: `Bearer ${customerToken}` };
+    expect((await request(CP).get('/api/status').set(customerAuth)).status).toBe(403);
+    expect((await request(CP).get('/api/logs').set(customerAuth)).status).toBe(403);
+    expect((await request(CP).post('/api/reset').set(customerAuth)).status).toBe(403);
   });
 
   test('Control Plane CORS rejects unapproved origins', async () => {

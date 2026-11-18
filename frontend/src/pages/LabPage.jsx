@@ -7,12 +7,14 @@ import SystemOverview from '../components/SystemOverview';
 import RequestLogs from '../components/RequestLogs';
 import { api } from '../services/api';
 import { BACKEND_INSTANCES } from '../services/ports';
+import { isAdmin } from '../services/roles';
 import { useLab } from '../hooks/useLab';
 import { useStore } from '../store/StoreContext';
 
 export default function LabPage() {
   const lab = useLab();
-  const { token, login, logout } = useStore();
+  const { token, login, logout, user } = useStore();
+  const canManage = isAdmin(user);
   const [autoRecover, setAutoRecover] = useState(null);
 
   // Dynamic Route Change scenario: swap /api/products/* -> orders, then back.
@@ -133,6 +135,7 @@ export default function LabPage() {
             onScenario={(type) => (SCENARIOS[type] || scenarioRouteChange)()}
             token={token}
             setToken={(result) => result ? login(result) : logout()}
+            canManage={canManage}
           />
         </aside>
 
@@ -147,10 +150,10 @@ export default function LabPage() {
             <div className="banner banner-orange">Circuit breaker demo active: opening circuits on Product Service, then blocked requests - cooldown - HALF-OPEN probes (auto-recovers)</div>
           )}
           <SystemOverview overview={lab.overview} history={lab.history} connected={lab.connected} circuits={lab.circuits} />
-          <Gateways gatewayHealth={lab.gatewayHealth} gatewayMetrics={lab.gatewayMetrics} notify={lab.notify} />
-          <Backends backendHealth={lab.backendHealth} backendMetrics={lab.backendMetrics} circuits={lab.circuits} notify={lab.notify} />
+          <Gateways gatewayHealth={lab.gatewayHealth} gatewayMetrics={lab.gatewayMetrics} notify={lab.notify} canManage={canManage} />
+          <Backends backendHealth={lab.backendHealth} backendMetrics={lab.backendMetrics} circuits={lab.circuits} notify={lab.notify} canManage={canManage} />
           <CircuitBreakers circuits={lab.circuits} />
-          <RequestLogs newLogs={lab.newLogs} notify={lab.notify} />
+          <RequestLogs newLogs={lab.newLogs} notify={lab.notify} canManage={canManage} />
         </main>
       </div>
       {lab.toast && <div className={`toast toast-${lab.toast.kind}`}>{lab.toast.message}</div>}

@@ -57,11 +57,12 @@ const RequestLogSchema = new mongoose.Schema(
 );
 RequestLogSchema.index({ timestamp: -1 });
 
-// Demo users for the login flow.
+// Lab accounts for legacy username/password authentication.
 const UserSchema = new mongoose.Schema({
-  username: { type: String, unique: true },
-  password: String, // demo only - plain text on purpose for a teaching lab
-  role: { type: String, default: 'student' },
+  username: { type: String, required: true, unique: true, trim: true, minlength: 3, maxlength: 80 },
+  passwordHash: { type: String },
+  password: String, // Retained temporarily for controlled migration of legacy records.
+  role: { type: String, enum: ['student', 'admin'], default: 'student' },
 });
 
 // ---------------------------------------------------------------------------

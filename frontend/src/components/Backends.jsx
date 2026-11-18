@@ -16,7 +16,7 @@ function Dot({ status }) {
  * circuit breaker (CLOSED / OPEN / HALF-OPEN) - deliberately separate from
  * the health dot, which only reflects administrative availability.
  */
-export default function Backends({ backendHealth, backendMetrics, circuits, notify }) {
+export default function Backends({ backendHealth, backendMetrics, circuits, notify, canManage = false }) {
   const circuitOf = (port) => (circuits || {})[String(port)];
   // Configured instances per service (from frontend/.env). If the control
   // plane reports extra instances they are picked up from live health data.
@@ -89,22 +89,26 @@ export default function Backends({ backendHealth, backendMetrics, circuits, noti
                         </span>
                       )}
                       <span className="muted">{i.m.requests || 0} reqs</span>
-                      <div className="instance-row-actions">
-                        <button className="btn btn-xs btn-outline-red" disabled={i.h.healthy === false} onClick={() => act(i.port, 'fail', null, `Instance :${i.port} failed`)}><Power size={11} /> Fail</button>
-                        <button className="btn btn-xs btn-outline-green" disabled={i.h.healthy !== false} onClick={() => act(i.port, 'recover', null, `Instance :${i.port} recovered`)}><Play size={11} /> Recover</button>
-                      </div>
+                      {canManage && (
+                        <div className="instance-row-actions">
+                          <button className="btn btn-xs btn-outline-red" disabled={i.h.healthy === false} onClick={() => act(i.port, 'fail', null, `Instance :${i.port} failed`)}><Power size={11} /> Fail</button>
+                          <button className="btn btn-xs btn-outline-green" disabled={i.h.healthy !== false} onClick={() => act(i.port, 'recover', null, `Instance :${i.port} recovered`)}><Play size={11} /> Recover</button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <div className="instance-actions">
-                <button className="btn btn-sm btn-outline-orange" onClick={() => act(instances[0].port, 'latency', { ms: 400 }, `Simulated 400 ms latency on :${instances[0].port}`)}>
-                  <Timer size={13} /> Simulate Latency
-                </button>
-                <button className="btn btn-sm btn-outline-orange" onClick={() => act(instances[0].port, 'errors', { rate: 0.4 }, `Simulated 40% errors on :${instances[0].port}`)}>
-                  <AlertTriangle size={13} /> Simulate Errors
-                </button>
-              </div>
+              {canManage && (
+                <div className="instance-actions">
+                  <button className="btn btn-sm btn-outline-orange" onClick={() => act(instances[0].port, 'latency', { ms: 400 }, `Simulated 400 ms latency on :${instances[0].port}`)}>
+                    <Timer size={13} /> Simulate Latency
+                  </button>
+                  <button className="btn btn-sm btn-outline-orange" onClick={() => act(instances[0].port, 'errors', { rate: 0.4 }, `Simulated 40% errors on :${instances[0].port}`)}>
+                    <AlertTriangle size={13} /> Simulate Errors
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}

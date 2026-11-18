@@ -25,6 +25,7 @@ const registry = require('./registry');
 function createControlPlane({ port }) {
   const app = express();
   const isProduction = process.env.NODE_ENV === 'production';
+  const labRoles = new Set(['admin', 'student']);
   app.use(corsMiddleware());
   app.use(express.json({ limit: '512kb' }));
 
@@ -46,7 +47,7 @@ function createControlPlane({ port }) {
       : authorization.startsWith('Bearer ') ? authorization.slice(7) : null;
     const result = token ? verifyToken(token) : { ok: false };
     if (!result.ok) return next(new Error('unauthorized'));
-    if (result.payload.role !== 'admin') return next(new Error('forbidden'));
+    if (!labRoles.has(result.payload.role)) return next(new Error('forbidden'));
     const expiresAt = Number(result.payload.exp) * 1000;
     if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return next(new Error('unauthorized'));
     socket.data.user = result.payload;
@@ -150,13 +151,20 @@ function createControlPlane({ port }) {
 
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ error: 'unauthorized', message: 'Administrator authentication required' });
+    if (!token) return res.status(401).json({ error: 'unauthorized', message: 'Authentication required' });
     const result = verifyToken(token);
-    if (!result.ok) return res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired administrator token' });
-    if (result.payload.role !== 'admin') return res.status(403).json({ error: 'forbidden', message: 'Administrator role required' });
+    if (!result.ok) return res.status(401).json({ error: 'unauthorized', message: 'Invalid or expired token' });
+    if (!labRoles.has(result.payload.role)) return res.status(403).json({ error: 'forbidden', message: 'Virtual Lab access required' });
     req.user = result.payload;
     next();
   });
+
+  function requireAdmin(req, res, next) {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'forbidden', message: 'Administrator role required' });
+    }
+    next();
+  }
 
   // ---------- REST: configuration ----------
   app.get('/api/config/latest', async (req, res, next) => {
@@ -166,7 +174,7 @@ function createControlPlane({ port }) {
     } catch (e) { next(e); }
   });
 
-  app.put('/api/config', async (req, res, next) => {
+  app.put('/api/config', requireAdmin, async (req, res, next) => {
     try {
       const { routes } = req.body || {};
       const applied = await manager.applyRoutes(routes, String(req.user.sub));
@@ -174,7 +182,7 @@ function createControlPlane({ port }) {
     } catch (e) { next(e); }
   });
 
-  app.get('/api/config/history', async (req, res, next) => {
+  app.get('/api/config/history', requireAdmin, async (req, res, next) => {
     try {
       const versions = await RouteConfig.find().sort({ version: -1 }).limit(20).lean();
       const audit = await ConfigAudit.find().sort({ createdAt: -1 }).limit(20).lean();
@@ -198,7 +206,7 @@ function createControlPlane({ port }) {
     return publisher.publish(channel, JSON.stringify(payload));
   }
 
-  app.post('/api/backend/:port/:action', async (req, res) => {
+  app.post('/api/backend/:port/:action', requireAdmin, async (req, res) => {
     const port = Number(req.params.port);
     const action = req.params.action; // fail | recover | latency | errors
     const valid = { fail: ['down'], recover: ['up'], latency: ['latency'], errors: ['errors'] };
@@ -217,7 +225,7 @@ function createControlPlane({ port }) {
     res.json({ ok: true, port, action: cmd, value });
   });
 
-  app.post('/api/gateway/:port/:action', async (req, res) => {
+  app.post('/api/gateway/:port/:action', requireAdmin, async (req, res) => {
     const port = Number(req.params.port);
     const action = req.params.action;
     if (!['fail', 'recover'].includes(action)) return res.status(400).json({ error: 'bad_request', message: 'action must be fail|recover' });
@@ -248,7 +256,7 @@ function createControlPlane({ port }) {
     } catch (e) { next(e); }
   });
 
-  app.delete('/api/logs', async (req, res, next) => {
+  app.delete('/api/logs', requireAdmin, async (req, res, next) => {
     try {
       await RequestLog.deleteMany({});
       io.emit('logs-cleared');
@@ -257,7 +265,7 @@ function createControlPlane({ port }) {
   });
 
   // ---------- REST: reset lab (counters only, config history is kept) ----------
-  app.post('/api/reset', async (req, res, next) => {
+  app.post('/api/reset', requireAdmin, async (req, res, next) => {
     try {
       await publishCmd(CHANNELS.RESET, { ts: Date.now() });
       // Also clear the shared rate-limit windows, authentication throttle

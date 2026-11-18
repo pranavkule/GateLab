@@ -19,7 +19,7 @@ function Dot({ status }) {
  * Socket.IO; health comes from active polling. Simulate/Recover change the
  * actual request handling on the gateway process.
  */
-export default function Gateways({ gatewayHealth, gatewayMetrics, notify }) {
+export default function Gateways({ gatewayHealth, gatewayMetrics, notify, canManage = false }) {
   // Live truth first: the control plane keys health by the real gateway
   // ports. Fall back to configured ports when no snapshot arrived yet.
   const ports = (Object.keys(gatewayHealth || {}).length
@@ -69,14 +69,16 @@ export default function Gateways({ gatewayHealth, gatewayMetrics, notify }) {
                 <div><span>Avg latency</span><b>{m.requests ? `${avg} ms` : '-'}</b></div>
                 <div><span>Share</span><b>{share != null ? `${share}%` : '-'}</b></div>
               </div>
-              <div className="instance-actions">
-                <button className="btn btn-sm btn-outline-red" onClick={() => act(port, 'fail', 'Simulated failure of')} disabled={h && h.healthy === false}>
-                  <Power size={13} /> Simulate Failure
-                </button>
-                <button className="btn btn-sm btn-outline-green" onClick={() => act(port, 'recover', 'Recovered')} disabled={h && h.healthy !== false}>
-                  <Play size={13} /> Recover
-                </button>
-              </div>
+              {canManage && (
+                <div className="instance-actions">
+                  <button className="btn btn-sm btn-outline-red" onClick={() => act(port, 'fail', 'Simulated failure of')} disabled={h && h.healthy === false}>
+                    <Power size={13} /> Simulate Failure
+                  </button>
+                  <button className="btn btn-sm btn-outline-green" onClick={() => act(port, 'recover', 'Recovered')} disabled={h && h.healthy !== false}>
+                    <Play size={13} /> Recover
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}

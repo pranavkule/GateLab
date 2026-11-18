@@ -15,6 +15,9 @@ const { signToken, verifyToken } = require('./jwt');
 const { registerUser, authenticateCustomer } = require('../services/usersApi');
 const { corsMiddleware } = require('../security/cors');
 const { createAuthThrottleMiddleware } = require('../middleware/authThrottle');
+const { verifyPassword } = require('../utils/password');
+
+const DUMMY_STUDENT_PASSWORD_HASH = `scrypt:${'0'.repeat(32)}:${'0'.repeat(128)}`;
 
 /**
  * @param {object} [opts]
@@ -32,28 +35,35 @@ function createAuthApp({ redis } = {}) {
   const loginThrottle = createAuthThrottleMiddleware({ redis, kind: 'login' });
   const registerThrottle = createAuthThrottleMiddleware({ redis, kind: 'register' });
 
+  app.post('/auth/login', loginThrottle, async (req, res, next) => {
+    try {
+      const { username, password } = req.body || {};
+      if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'bad_request', message: 'username and password are required' });
+      }
+      const normalizedUsername = username.trim();
+      if (normalizedUsername.length < 3 || normalizedUsername.length > 80) {
+        return res.status(400).json({ error: 'bad_request', message: 'username must be 3-80 characters' });
+      }
+      if (password.length < 8 || password.length > 128) {
+        return res.status(400).json({ error: 'bad_request', message: 'password must be 8-128 characters' });
+      }
+
+      const user = await User.findOne({ username: normalizedUsername }).lean();
+      if (!user || user.role !== 'student' || typeof user.passwordHash !== 'string') {
+        await verifyPassword(password, DUMMY_STUDENT_PASSWORD_HASH);
+        return res.status(401).json({ error: 'unauthorized', message: 'Invalid username or password' });
+      }
+      if (!(await verifyPassword(password, user.passwordHash))) {
+        return res.status(401).json({ error: 'unauthorized', message: 'Invalid username or password' });
+      }
+
+      const token = signToken({ sub: user.username, role: 'student' }, { expiresIn });
+      res.json({ token, expiresIn, user: { username: user.username, role: 'student' } });
+    } catch (e) { next(e); }
+  });
+
   if (!isProduction) {
-    app.post('/auth/login', loginThrottle, async (req, res, next) => {
-      try {
-        const { username, password } = req.body || {};
-        if (!username || !password) return res.status(400).json({ error: 'bad_request', message: 'username and password required' });
-
-        const demoUser = process.env.DEMO_USER;
-        const demoPassword = process.env.DEMO_PASSWORD;
-        const isConfiguredDemo = Boolean(demoUser && demoPassword) &&
-          username === demoUser && password === demoPassword;
-        const user = isConfiguredDemo
-          ? { username, role: 'admin' }
-          : await User.findOne({ username }).lean();
-
-        if (!user || (!isConfiguredDemo && user.password !== password)) {
-          return res.status(401).json({ error: 'unauthorized', message: 'Invalid username or password' });
-        }
-        const token = signToken({ sub: user.username, role: user.role || 'student' }, { expiresIn });
-        res.json({ token, expiresIn, user: { username: user.username, role: user.role || 'student' } });
-      } catch (e) { next(e); }
-    });
-
     app.post('/auth/token', (req, res) => {
       const type = (req.body && req.body.type) || 'valid';
       if (type === 'valid') {

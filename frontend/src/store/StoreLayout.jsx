@@ -1,11 +1,14 @@
 import React from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Activity, ShoppingBag, ShoppingCart } from 'lucide-react';
+import { canAccessLab } from '../services/roles';
 import { useStore } from './StoreContext';
 
 export default function StoreLayout() {
   const { user, cartCount, logout } = useStore();
   const navigate = useNavigate();
+  const showLabLink = !user || canAccessLab(user);
+  const showStoreAccount = user && user.role !== 'student';
 
   function signOut() {
     logout();
@@ -21,9 +24,9 @@ export default function StoreLayout() {
         </Link>
         <nav className="store-nav" aria-label="Store navigation">
           <NavLink to="/store" end>Shop</NavLink>
-          <Link to="/">Gateway Dashboard</Link>
-          {user && <NavLink to="/store/orders">My orders</NavLink>}
-          {user && <NavLink to="/store/account">My account</NavLink>}
+          {showLabLink && <Link to="/">Gateway Dashboard</Link>}
+          {showStoreAccount && <NavLink to="/store/orders">My orders</NavLink>}
+          {showStoreAccount && <NavLink to="/store/account">My account</NavLink>}
           {user && user.role === 'admin' && <NavLink to="/store/admin">Admin</NavLink>}
           <Link className="store-cart-link" to="/store/cart" aria-label={`Cart, ${cartCount} items`}>
             <ShoppingCart size={17} /> Cart <span className="cart-count">{cartCount}</span>
@@ -38,7 +41,7 @@ export default function StoreLayout() {
       </main>
       <footer className="store-footer">
         <span>GateLab Store</span>
-        <Link to="/">Gateway Virtual Lab <Activity size={14} /></Link>
+        {showLabLink && <Link to="/">Gateway Virtual Lab <Activity size={14} /></Link>}
       </footer>
     </div>
   );

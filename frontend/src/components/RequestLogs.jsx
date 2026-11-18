@@ -15,7 +15,7 @@ const PAGE_SIZE = 12;
  * Request log table. Live rows arrive over Socket.IO; older/filtered rows
  * are fetched from MongoDB via the control plane.
  */
-export default function RequestLogs({ newLogs, notify }) {
+export default function RequestLogs({ newLogs, notify, canManage = false }) {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -69,7 +69,7 @@ export default function RequestLogs({ newLogs, notify }) {
             <option value="rate_limited">429 Rate-limited</option>
             <option value="failed">5xx Failed</option>
           </select>
-          <button className="btn btn-sm btn-outline-red" onClick={clearAll}><Trash2 size={13} /> Clear</button>
+          {canManage && <button className="btn btn-sm btn-outline-red" onClick={clearAll}><Trash2 size={13} /> Clear</button>}
         </div>
       </div>
       <div className="table-wrap">

@@ -181,11 +181,57 @@ describe('Auth throttle middleware (P2.6.1) - in-process', () => {
     expect(again.status).toBe(200);
   });
 
+  test('production fails closed for Redis errors and invalid responses, then recovers', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      let state = 'unavailable';
+      const reconnecting = {
+        eval: async () => {
+          if (state === 'unavailable') throw new Error('connection down');
+          if (state === 'invalid') return ['unexpected'];
+          return [1, 5000];
+        },
+      };
+      const app = appWith(reconnecting, 'login', 1, 5000);
+
+      const unavailable = await request(app).post('/target').set('X-Real-IP', '198.51.100.70');
+      expect(unavailable.status).toBe(503);
+      expect(unavailable.body.error).toBe('service_unavailable');
+
+      state = 'invalid';
+      const invalid = await request(app).post('/target').set('X-Real-IP', '198.51.100.70');
+      expect(invalid.status).toBe(503);
+      expect(invalid.body.error).toBe('service_unavailable');
+
+      state = 'available';
+      const recovered = await request(app).post('/target').set('X-Real-IP', '198.51.100.70');
+      expect(recovered.status).toBe(200);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   test('fail-open by construction: no Redis connection disables throttling', async () => {
     const app = appWith(null, 'login', 1, 5000);
     for (let i = 0; i < 3; i += 1) {
       const res = await request(app).post('/target').set('X-Real-IP', '198.51.100.8');
       expect(res.status).toBe(200);
+    }
+  });
+
+  test('production requires a Redis connection', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const app = appWith(null, 'login', 1, 5000);
+      const response = await request(app).post('/target');
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe('service_unavailable');
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
     }
   });
 });
@@ -212,6 +258,15 @@ describe('clearAuthThrottleKeys (P2.6.1)', () => {
 });
 
 describe('Auth throttle on the test stack (P2.6.1)', () => {
+  test('student login responses carry throttle headers (middleware mounted)', async () => {
+    const res = await fetch(`${AUTH}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'edgegate-test-student', password: 'incorrect-password' }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('x-ratelimit-limit')).toBe('25');
+  });
   test('customer-login responses carry throttle headers (middleware mounted)', async () => {
     const res = await fetch(`${AUTH}/auth/customer-login`, {
       method: 'POST',

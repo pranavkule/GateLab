@@ -162,9 +162,10 @@ npm run dev             # backend (11 processes via cluster) + frontend (Vite)
 
 Open **http://localhost:5174**. The root path `/` is the primary **GateLab
 Dashboard** (Virtual Lab): live gateway and backend metrics, request logs,
-traffic generation, failure simulation, and routing controls. The
-administrator/gateway sign-in entry is **http://localhost:5174/login**; it uses
-the same Auth Service, JWT format and browser session as the store.
+traffic generation, failure simulation, and routing controls. Administrators
+and students use the lab; customers use the store. The lab sign-in entry is
+**http://localhost:5174/login**; it uses the same Auth Service, JWT format and
+browser session as the store.
 
 The separate **Demo Store** is available at **http://localhost:5174/store**.
 It is a distinct application area from the Virtual Lab: customers can browse the
@@ -174,9 +175,9 @@ and orders from the store's Admin page. Customer authentication remains at
 `/store/login` and `/store/register`. Store traffic goes through the entry
 load balancer (:3010); registration and customer login use the Auth service
 (:5011). Protected service operations still enforce authorization in the
-backend. After sign-in, administrators land on the Dashboard unless a requested
-destination was preserved; customers continue to their account page unless a
-store deep link was preserved.
+backend. After sign-in, administrators and students land on the Dashboard unless
+an allowed destination was preserved; customers continue to the Demo Store
+unless a store deep link was preserved.
 
 ### Customer workflow
 
@@ -207,14 +208,15 @@ the admin link in the UI is not the security boundary. Discontinued products
 remain in storage for order history, but the current admin API/UI has no restore
 operation.
 
-The Virtual Lab and Configuration dashboard require administrator JWTs for
-monitoring, configuration, logs, reset, fault injection, and Socket.IO updates.
-Per-route rate limits are configured on the Configuration page and enforced by
-the gateways with shared Redis counters (see "Rate limiting demonstration" and
-`docs/architecture.md`). The development demo login and demo-token endpoints
-are disabled in production. Gateways may read the current routing snapshot
-during startup; the public `/health` endpoint returns only a minimal readiness
-status.
+The Virtual Lab accepts administrator and student JWTs for monitoring, request
+logs, traffic generation, and Socket.IO updates. Configuration, configuration
+history, reset, fault injection, and log clearing require an administrator JWT.
+The customer role remains store-only. Per-route rate limits are configured on
+the Configuration page and enforced by the gateways with shared Redis counters
+(see "Rate limiting demonstration" and `docs/architecture.md`). The development
+demo login and demo-token endpoints are disabled in production. Gateways may
+read the current routing snapshot during startup; the public `/health` endpoint
+returns only a minimal readiness status.
 
 Stop everything (including the dev processes started outside the terminal):
 
