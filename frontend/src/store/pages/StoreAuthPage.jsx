@@ -5,6 +5,15 @@ import { api } from '../../services/api';
 import { useStore } from '../StoreContext';
 import { Feedback } from '../StoreUI';
 
+function isCustomerStoreDestination(pathname) {
+  if (!pathname) return false;
+  if (pathname !== '/store' && !pathname.startsWith('/store/')) return false;
+  return pathname !== '/store/login'
+    && pathname !== '/store/register'
+    && pathname !== '/store/admin'
+    && !pathname.startsWith('/store/admin/');
+}
+
 export default function StoreAuthPage({ mode }) {
   const isRegister = mode === 'register';
   const { login, user } = useStore();
@@ -33,7 +42,10 @@ export default function StoreAuthPage({ mode }) {
       } else {
         const result = await api.store.customerLogin({ email, password });
         login(result);
-        const destination = location.state?.from?.pathname || '/store/account';
+        const requested = location.state?.from?.pathname;
+        const destination = result.user.role === 'admin'
+          ? (requested || '/')
+          : (isCustomerStoreDestination(requested) ? requested : '/store/account');
         navigate(destination, { replace: true });
       }
     } catch (e) {

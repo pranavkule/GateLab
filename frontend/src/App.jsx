@@ -19,6 +19,7 @@ export default function App() {
     <StoreProvider>
       <div className="app">
         <Routes>
+          <Route path="/login" element={<StoreAuthPage mode="login" />} />
           <Route path="/store" element={<StorefrontApp />}>
             <Route index element={<StoreHomePage />} />
             <Route path="products/:id" element={<ProductDetailPage />} />
@@ -48,9 +49,9 @@ function LabAccess({ children }) {
   const location = useLocation();
 
   if (import.meta.env.PROD && !user) {
-    return <Navigate to="/store/login" replace state={{ from: location }} />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
-  if (import.meta.env.PROD && user.role !== 'admin') {
+  if (user && user.role !== 'admin') {
     return (
       <section className="store-panel store-message">
         <h1>Administrator access required</h1>

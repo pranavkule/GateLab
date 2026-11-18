@@ -160,16 +160,23 @@ frontend/Vite variable.
 npm run dev             # backend (11 processes via cluster) + frontend (Vite)
 ```
 
-Open **http://localhost:5174**.
+Open **http://localhost:5174**. The root path `/` is the primary **GateLab
+Dashboard** (Virtual Lab): live gateway and backend metrics, request logs,
+traffic generation, failure simulation, and routing controls. The
+administrator/gateway sign-in entry is **http://localhost:5174/login**; it uses
+the same Auth Service, JWT format and browser session as the store.
 
-The customer-facing storefront is available at **http://localhost:5174/store**.
-It is a separate application area from the Virtual Lab: customers can browse the
+The separate **Demo Store** is available at **http://localhost:5174/store**.
+It is a distinct application area from the Virtual Lab: customers can browse the
 live product catalog, register or sign in, manage a local cart, place orders,
 and view their profile and order history. Administrators can manage products
-and orders from the store's Admin page. Store traffic goes through the entry
+and orders from the store's Admin page. Customer authentication remains at
+`/store/login` and `/store/register`. Store traffic goes through the entry
 load balancer (:3010); registration and customer login use the Auth service
 (:5011). Protected service operations still enforce authorization in the
-backend.
+backend. After sign-in, administrators land on the Dashboard unless a requested
+destination was preserved; customers continue to their account page unless a
+store deep link was preserved.
 
 ### Customer workflow
 
@@ -189,8 +196,10 @@ Order Service remain authoritative for prices and inventory.
 
 ### Admin workflow
 
-Sign in at `/store/login` with an administrator provisioned for the current
-database, then open **Admin**. The Products tab
+Sign in at `/login` (or the customer-compatible `/store/login`) with an
+administrator provisioned for the current database. Administrators are taken to
+the GateLab Dashboard after sign-in; open **Demo Store → Admin** for store
+administration. The Products tab
 lists active products and supports create, edit, and soft-delete operations.
 The Orders tab supports status/customer filters, order details, and valid status
 transitions. The Product and Order Services enforce admin authorization; hiding
@@ -570,8 +579,9 @@ remote hosts, and Atlas URLs. See [docs/p261-test-environment.md](docs/p261-test
 for the frontend build, isolated runtime profile, and manual verification steps.
 
 For browser-based smoke testing, start `npm run dev`, then use
-`http://localhost:5174/store` for customer workflows and the Virtual Lab,
-Configuration, and Guide links for gateway demonstrations. Store API requests
+`http://localhost:5174/login` for administrator/gateway sign-in,
+`http://localhost:5174/` for the GateLab Dashboard, and
+`http://localhost:5174/store` for customer workflows. Store API requests
 use the real entry load balancer and Auth Service; this browser walkthrough is
 manual rather than a checked-in Playwright suite.
 

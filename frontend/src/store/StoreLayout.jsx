@@ -21,6 +21,7 @@ export default function StoreLayout() {
         </Link>
         <nav className="store-nav" aria-label="Store navigation">
           <NavLink to="/store" end>Shop</NavLink>
+          <Link to="/">Gateway Dashboard</Link>
           {user && <NavLink to="/store/orders">My orders</NavLink>}
           {user && <NavLink to="/store/account">My account</NavLink>}
           {user && user.role === 'admin' && <NavLink to="/store/admin">Admin</NavLink>}

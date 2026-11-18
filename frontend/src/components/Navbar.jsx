@@ -28,11 +28,12 @@ export default function Navbar({ onReset }) {
         </div>
       </div>
       <div className="navbar-links">
-        <Link to="/store">E-commerce Store</Link>
-        <NavLink to="/" end>Virtual Lab</NavLink>
+        <NavLink to="/" end>Dashboard</NavLink>
         <NavLink to="/configuration">Configuration</NavLink>
         <NavLink to="/guide">Guide</NavLink>
-        {user && <button className="btn btn-outline-light" onClick={() => { logout(); navigate('/store/login', { replace: true }); }}>Log out</button>}
+        <Link to="/store">Demo Store</Link>
+        {!user && <Link to="/login">Sign In</Link>}
+        {user && <button className="btn btn-outline-light" onClick={() => { logout(); navigate('/login', { replace: true }); }}>Log out</button>}
         <button className="btn btn-outline-light" onClick={resetLab}>
           <RotateCcw size={14} /> Reset Lab
         </button>
